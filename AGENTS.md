@@ -23,7 +23,7 @@ Docker alternative: `docker compose up -d` (port 8080).
 - **Rules:** README.md's "Piece rules → Confirmed vs assumed" separates what the user confirmed from what was guessed. Don't turn an assumption into a confirmed rule without the user saying so. Ask when a game rule is unclear.
 - **Coordinates:** grid cells are square in the editor, but the game's are 64×48 px. Any art or background work has to respect `UNIT_PX`.
 - **Keep it typed.** Every module in `src/` starts with `// @ts-check`; give new functions and data JSDoc types, and put shared shapes in `src/types.js`. Types are comments only: never add a build step for them.
-- **Art is WebP.** Sprites lossless (pixel-exact), photographic backgrounds lossy; lossless masters that shouldn't be published go in `art-src/` The one exception is the social preview `assets/og-image.jpg` (link previews don't all accept WebP). When features change, keep the About section in `index.html` and `llms.txt` accurate.
+- **Art is WebP.** Sprites lossless (pixel-exact), photographic backgrounds lossy; lossless masters that shouldn't be published go in `art-src/` The exceptions are the social preview `assets/og-image.jpg` and the favicons in `assets/icons/` (link previews and Safari don't all accept WebP). When features change, keep the About section in `index.html` and `llms.txt` accurate.
 - Match the existing style: small modules, 2-space indent, single quotes, sparse comments that explain *why*.
 
 ## Testing notes
