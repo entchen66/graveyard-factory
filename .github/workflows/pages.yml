@@ -31,7 +31,7 @@ jobs:
       - name: Stage the site
         run: |
           mkdir _site
-          cp -r index.html styles.css src assets .nojekyll _site/
+          cp -r index.html styles.css src assets llms.txt sitemap.xml .nojekyll _site/
           find _site -type f | sed 's|^_site/||' | sort > /tmp/files.txt
           echo "$(wc -l < /tmp/files.txt) files, $(du -sb _site | cut -f1) bytes"
       - uses: actions/configure-pages@v5

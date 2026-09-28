@@ -50,6 +50,7 @@ input[type=text], input[type=number], select, textarea {
   border-bottom: 1px solid var(--border);
 }
 .topbar .name { font-weight: 600; width: 200px; }
+.app-title { margin: 0; font-size: 14px; font-weight: 700; white-space: nowrap; }
 .group { display: flex; gap: 4px; align-items: center; }
 .toggles { gap: 10px; margin-left: auto; color: var(--muted); }
 
@@ -111,6 +112,10 @@ input[type=text], input[type=number], select, textarea {
 .stats b { color: var(--text); font-weight: 500; text-align: right; }
 
 .help ul { margin: 0; padding-left: 16px; color: var(--muted); }
+.about p { margin: 0 0 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.about ul { margin: 0 0 6px; padding-left: 16px; color: var(--muted); font-size: 12px; }
+.about strong { color: var(--text); }
+.about a { color: var(--accent); }
 kbd {
   font: 11px ui-monospace, monospace;
   background: var(--bg);

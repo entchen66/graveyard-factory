@@ -1,0 +1,22 @@
+# Graveyard Keeper 2 Factory Planner
+
+> Free, unofficial browser tool for planning the conveyor factory in the video game Graveyard Keeper 2 (Lazy Bear Games / tinyBuild). It is a floor-plan editor with the game's art plus an automatic planner: give it target outputs per minute and it chooses recipes, counts the smithies, assembly benches and kitchens needed, places them on the real factory floor and routes the conveyor belts. Runs entirely in the browser; no account, no install.
+
+Use it at https://naerymdan.github.io/graveyard-factory-optimizer/ — source and full documentation at https://github.com/naerymdan/graveyard-factory-optimizer.
+
+## What it covers
+
+- All 67 factory (conveyor) recipes from the game data: inputs, outputs, craft time in seconds, the worker talent level needed (gear for the smithy, hammer for the assembly bench, wheat for the kitchen) and the required station extension.
+- Stations: Smithy I–II, Assembly bench I–III (3×3), Kitchen I–II (2×2), each with four port layouts.
+- Station extensions, one small and one big slot per station: Smithy (Bellows; Hammer, Press, Grindstone), Assembly bench (Auto-hammer, Spinning wheel; Drill press, Sewing machine, Lathe), Kitchen (Millstone, Sealing machine; Stove).
+- Pieces: conveyor belts, splitters, underground conveyors (1×5, crossable gap), conveyor chests I/II with per-side output filters, distribution stations for raw materials, and supply stations for "Supply: …" crates.
+- Rules modelled: belts never cross but merge from the side; splitters output to both sides; chests output to neighbouring belts on their filtered sides (every side without filters); a station's left or right output needs a belt before a chest.
+
+## Docs
+
+- [README](https://github.com/naerymdan/graveyard-factory-optimizer/blob/site/README.md): editor controls, planner algorithm, layout file format, piece rules, game data and how it was extracted.
+- [Game data](https://github.com/naerymdan/graveyard-factory-optimizer/blob/site/src/catalog.js): items, recipes, stations, extensions.
+
+## Legal
+
+Unofficial fan-made tool with no affiliation with or endorsement by Lazy Bear Games or tinyBuild. Graveyard Keeper 2 and its art and data are © their owners, used under a claim of fair use.

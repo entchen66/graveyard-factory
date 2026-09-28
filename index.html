@@ -3,11 +3,57 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Factory Floor Editor</title>
+  <title>Graveyard Keeper 2 Factory Planner – conveyor layout editor and optimizer</title>
+  <meta name="description" content="Free Graveyard Keeper 2 factory planner: design conveyor layouts with the game's art, all 67 recipes and extensions, and auto-plan stations and belts.">
+  <link rel="canonical" href="https://naerymdan.github.io/graveyard-factory-optimizer/">
+  <meta name="theme-color" content="#15171c">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Graveyard Keeper 2 Factory Planner">
+  <meta property="og:title" content="Graveyard Keeper 2 Factory Planner">
+  <meta property="og:description" content="Free browser-based factory planner for Graveyard Keeper 2: lay out the conveyor factory with the game's art, pick recipes and station extensions, and let the planner place smithies, assembly benches and kitchens and route the belts for your target outputs.">
+  <meta property="og:url" content="https://naerymdan.github.io/graveyard-factory-optimizer/">
+  <meta property="og:image" content="https://naerymdan.github.io/graveyard-factory-optimizer/assets/og-image.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A planned Graveyard Keeper 2 factory: smithies and conveyor belts with flow lines">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="alternate" type="text/plain" href="llms.txt" title="Summary for language models">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Graveyard Keeper 2 Factory Planner",
+    "alternateName": ["Graveyard Keeper 2 factory optimizer", "GK2 conveyor planner"],
+    "url": "https://naerymdan.github.io/graveyard-factory-optimizer/",
+    "description": "Free browser-based factory planner for Graveyard Keeper 2: lay out the conveyor factory with the game's art, pick recipes and station extensions, and let the planner place smithies, assembly benches and kitchens and route the belts for your target outputs.",
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Any (web browser)",
+    "browserRequirements": "Requires JavaScript and a modern browser",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "image": "https://naerymdan.github.io/graveyard-factory-optimizer/assets/og-image.jpg",
+    "codeRepository": "https://github.com/naerymdan/graveyard-factory-optimizer",
+    "featureList": [
+      "Factory floor editor with the game's station, conveyor and chest art",
+      "All 67 factory recipes with craft times, talent levels and extensions",
+      "Station extensions with small and big slots",
+      "Automatic planner that places stations and routes conveyor belts",
+      "Supply stations, chests with side filters, splitters and underground conveyors",
+      "Import and export layouts as JSON"
+    ],
+    "about": {
+      "@type": "VideoGame",
+      "name": "Graveyard Keeper 2",
+      "author": { "@type": "Organization", "name": "Lazy Bear Games" },
+      "publisher": { "@type": "Organization", "name": "tinyBuild" }
+    }
+  }
+  </script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
+    <h1 class="app-title">Graveyard Keeper 2 Factory Planner</h1>
     <input id="layout-name" class="name" type="text" spellcheck="false" aria-label="Layout name">
     <div class="group">
       <button data-action="clear" title="Remove everything placed on the floor (distribution stations stay)">Clear</button>
@@ -50,6 +96,17 @@
       <section>
         <h2>Stats</h2>
         <div id="stats" class="stats"></div>
+      </section>
+      <section class="about">
+        <h2>About</h2>
+        <p>A free, unofficial <strong>factory planner for <em>Graveyard Keeper 2</em></strong>. Draw your conveyor factory on the real factory floor, or give the planner target outputs per minute (Supply: Iron, Building Kit I, Furniture I…) and it works out how many smithies, assembly benches and kitchens you need, places them and routes the belts.</p>
+        <ul>
+          <li>All 67 factory recipes, with craft times, worker talent levels and required extensions (Bellows, Hammer, Press, Auto-hammer, Drill press, Lathe…)</li>
+          <li>Conveyor belts, splitters, underground conveyors, chests with side filters, distribution and supply stations</li>
+          <li>Station layouts and extension slots as in the game; validation of blocked ports and missing extensions</li>
+          <li>Saves in your browser; import and export layouts as JSON</li>
+        </ul>
+        <p class="hint">Unofficial fan tool, not affiliated with Lazy Bear Games or tinyBuild; game art and data © their owners. <a href="https://github.com/naerymdan/graveyard-factory-optimizer">Source and docs on GitHub</a>.</p>
       </section>
       <section class="help">
         <h2>Controls</h2>
