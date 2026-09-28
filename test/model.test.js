@@ -281,3 +281,14 @@ test('a station side output needs a belt before a chest; a top output does not',
   top.add({ kind: 'chest', x: 1, y: 1 });
   assert.ok(!warns(top).some((m) => /side output/.test(m)));
 });
+
+test('factory power: 1 per station, belt and chest', () => {
+  const l = Layout.blank(12, 8);
+  l.add({ kind: 'station', type: 'smithy', level: 1, x: 1, y: 1 });
+  l.add({ kind: 'belt', x: 5, y: 1, rot: E });
+  l.add({ kind: 'belt', x: 6, y: 1, rot: E });
+  l.add({ kind: 'chest', x: 7, y: 1 });
+  l.add({ kind: 'splitter', x: 8, y: 3, rot: E });       // no power listed
+  l.add({ kind: 'distributor', x: 0, y: 7, rot: N, material: 'coal' });
+  assert.equal(l.power(), 4);
+});

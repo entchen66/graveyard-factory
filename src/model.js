@@ -3,7 +3,7 @@
 // UI-independent so the planner can reuse it (also runs under Node for tests).
 
 import {
-  DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, stationVariants, defaultVariant,
+  DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, stationVariants, defaultVariant,
   BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, entityCells, recipesFor,
 } from './catalog.js';
 
@@ -352,6 +352,14 @@ export class Layout {
     return this.ports(t).some((p) => p.kind === 'in' && p.nx === fx && p.ny === fy);
   }
 
+  /**
+   * Factory power the layout uses (POWER_COST per piece).
+   * @returns {number}
+   */
+  power() {
+    return powerOf(this.entities);
+  }
+
   // ---- validation ----------------------------------------------------------
 
   /** @returns {Issue[]} */
@@ -556,7 +564,19 @@ function parseTerrainRows(lines) {
   );
 }
 
-/** @param {Terrain} t */
+/**
+ * Factory power a set of pieces uses.
+ * @param {EntitySpec[]} entities
+ * @returns {number}
+ */
+export function powerOf(entities) {
+  return entities.reduce((n, e) => n + (POWER_COST[e.kind] ?? 0), 0);
+}
+
+/**
+ * @param {Terrain} t
+ * @returns {string}
+ */
 export function terrainName(t) {
   return TERRAIN_TYPES.find((tt) => tt.id === t)?.name ?? 'Unknown';
 }

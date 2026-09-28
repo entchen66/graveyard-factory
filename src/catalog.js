@@ -466,6 +466,12 @@ export const CHEST_ART_OFFSET = [-4, -32];
 /** @type {(id: string) => boolean} */
 export const isSupplyItem = (id) => id.startsWith('supply_');
 
+// Factory power (the gear in the game's UI) each placed piece uses. Kinds not
+// listed cost nothing. The icon is the game's power gear, tinted yellow.
+/** @type {Partial<Record<import('./types.js').EntityKind, number>>} */
+export const POWER_COST = { station: 1, belt: 1, chest: 1 };
+export const POWER_ICON = 'assets/ui/power.webp';
+
 // Belts can be fed from their sides (merging), confirmed in-game.
 export const BELT_ACCEPTS_FROM_SIDES = true;
 // Must the underground conveyor's gap cell be factory floor?

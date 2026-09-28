@@ -8,6 +8,7 @@
 
 import { STATIONS, RECIPE_BY_ID, DIRS, entityCells, stationVariants, isSupplyItem } from '../catalog.js';
 import { RouteGrid, DX, DY, COST } from './router.js';
+import { powerOf } from '../model.js';
 
 /** @typedef {import('../types.js').StationType} StationType */
 /** @typedef {import('../types.js').EntitySpec} EntitySpec */
@@ -75,7 +76,7 @@ import { RouteGrid, DX, DY, COST } from './router.js';
  * @property {Placement[]} placements
  * @property {Failure[]} failures
  * @property {number} score
- * @property {{ stations: number, belts: number, undergrounds: number, splitters: number, chests: number, supplyStations: number, connections: number, iterations: number }} stats
+ * @property {{ stations: number, belts: number, undergrounds: number, splitters: number, chests: number, supplyStations: number, power: number, connections: number, iterations: number }} stats
  */
 
 // Penalty per unrouted connection, far above any realistic belt cost so that
@@ -702,7 +703,7 @@ export class Planner {
       score: r.score,
       stats: {
         stations: count('station'), belts: count('belt'), undergrounds: count('underground'),
-        splitters: count('splitter'), chests: count('chest'), supplyStations: count('supply_station'), connections: r.edges,
+        splitters: count('splitter'), chests: count('chest'), supplyStations: count('supply_station'), power: powerOf(entities), connections: r.edges,
         iterations: this.iterations,
       },
     };

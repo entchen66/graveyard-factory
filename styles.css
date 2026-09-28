@@ -112,6 +112,7 @@ input[type=text], input[type=number], select, textarea {
 .stats b { color: var(--text); font-weight: 500; text-align: right; }
 
 .help ul { margin: 0; padding-left: 16px; color: var(--muted); }
+.power img { width: 15px; height: 15px; vertical-align: -3px; margin-right: 4px; image-rendering: pixelated; }
 .about p { margin: 0 0 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .about ul { margin: 0 0 6px; padding-left: 16px; color: var(--muted); font-size: 12px; }
 .about strong { color: var(--text); }

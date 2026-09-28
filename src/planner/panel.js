@@ -2,7 +2,7 @@
 // Planner side panel: targets, options, production summary, and running the
 // layout search with a live preview on the canvas.
 
-import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS } from '../catalog.js';
+import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON } from '../catalog.js';
 import { planProduction, recipesProducing } from './production.js';
 
 /** @typedef {import('../types.js').Item} Item */
@@ -245,6 +245,7 @@ export class PlannerPanel {
         lines.push(r.failures.length ? `${r.failures.length} connection(s) could not be routed` : 'All connections routed');
       }
       el.append(...lines.map((t, i) => h('p', { class: i === 2 && r?.failures.length ? 'error' : 'hint' }, t)));
+      if (r) el.append(h('p', { class: 'hint power', title: 'Factory power: 1 per station, belt and chest' }, h('img', { src: POWER_ICON, alt: '' }), `Power: ${r.stats.power}`));
       if (r?.failures.length) {
         el.append(h('ul', { class: 'failures' }, ...r.failures.slice(0, 8).map((f) => h('li', {}, describeFailure(f)))));
       }

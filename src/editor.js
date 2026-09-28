@@ -3,7 +3,7 @@
 
 import {
   DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
-  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, extensionsFor, recipesFor, entityBounds,
+  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, extensionsFor, recipesFor, entityBounds,
 } from './catalog.js';
 import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
 import { drawLayout, loadArt } from './render.js';
@@ -738,7 +738,11 @@ export class Editor {
       ['Chests', byKind('chest')],
       ['Distributors', byKind('distributor')],
     ];
-    this.$('stats').replaceChildren(...rows.flatMap(([k, v]) => [h('span', {}, k), h('b', {}, String(v))]));
+    this.$('stats').replaceChildren(
+      h('span', { class: 'power', title: 'Factory power: 1 per station, belt and chest' }, h('img', { src: POWER_ICON, alt: '' }), 'Power'),
+      h('b', {}, String(l.power())),
+      ...rows.flatMap(([k, v]) => [h('span', {}, k), h('b', {}, String(v))]),
+    );
   }
 
   updateStatusCell() {
