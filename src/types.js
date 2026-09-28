@@ -8,7 +8,7 @@
 
 /** Terrain cell: '.' floor, ' ' outside. @typedef {string} Terrain */
 
-/** @typedef {'belt' | 'underground' | 'splitter' | 'chest' | 'distributor' | 'station' | 'supply_station'} EntityKind */
+/** @typedef {'belt' | 'underground' | 'splitter' | 'chest' | 'distributor' | 'station' | 'supply_station' | 'carousel'} EntityKind */
 /** @typedef {'assembly_bench' | 'smithy' | 'kitchen'} StationType */
 
 /**

@@ -165,6 +165,8 @@ test('planner: Supply: Iron on the real factory floor routes everything', () => 
   assert.deepEqual(res.failures, []);
   assert.deepEqual(out.validate().filter((i) => i.severity !== 'info').map((i) => i.message), []);
   assert.equal(res.stats.stations, 9);
+  // Over the built-in 112 power, so the plan brings its own carousels.
+  assert.ok(res.stats.power > 112 && res.stats.carousels > 0 && res.stats.carouselsNotPlaced === 0, JSON.stringify(res.stats));
 });
 
 test('planner: stationInstances splits fractional crafts over stations', () => {

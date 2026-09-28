@@ -245,7 +245,13 @@ export class PlannerPanel {
         lines.push(r.failures.length ? `${r.failures.length} connection(s) could not be routed` : 'All connections routed');
       }
       el.append(...lines.map((t, i) => h('p', { class: i === 2 && r?.failures.length ? 'error' : 'hint' }, t)));
-      if (r) el.append(h('p', { class: 'hint power', title: 'Factory power: 1 per station, belt and chest' }, h('img', { src: POWER_ICON, alt: '' }), `Power: ${r.stats.power}`));
+      if (r) {
+        const st = r.stats;
+        const extra = st.carousels ? ` · adds ${st.carousels} carousel(s)` : '';
+        const noRoom = st.carouselsNotPlaced > 0 ? ` · no room for ${st.carouselsNotPlaced} more` : '';
+        el.append(h('p', { class: noRoom ? 'error power' : 'hint power', title: 'Factory power: 1 per station, belt and chest; zombies from the Belt Master setting in Stats' },
+          h('img', { src: POWER_ICON, alt: '' }), `Power: ${st.power} · ${st.zombies} zombies${extra}${noRoom}`));
+      }
       if (r?.failures.length) {
         el.append(h('ul', { class: 'failures' }, ...r.failures.slice(0, 8).map((f) => h('li', {}, describeFailure(f)))));
       }

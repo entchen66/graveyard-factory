@@ -3,7 +3,7 @@
 // UI-independent so the planner can reuse it (also runs under Node for tests).
 
 import {
-  DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, stationVariants, defaultVariant,
+  DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
   BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, entityCells, recipesFor,
 } from './catalog.js';
 
@@ -36,6 +36,7 @@ import {
  * @property {Entity[]} [entities]
  * @property {number} [nextId]
  * @property {PlannerSettings} [planner]
+ * @property {boolean} [beltMaster] the player has the Belt Master perk
  */
 
 /**
@@ -50,6 +51,7 @@ import {
  * @property {string[]} terrain ASCII rows
  * @property {EntitySpec[]} [entities]
  * @property {PlannerSettings} [planner]
+ * @property {boolean} [beltMaster]
  */
 
 /** @typedef {{ ok: boolean, reason?: string }} PlaceCheck */
@@ -70,8 +72,9 @@ export const FORMAT_VERSION = 1;
 
 export class Layout {
   /** @param {LayoutInit} [init] */
-  constructor({ name = 'Untitled factory', width, height, terrain, entities = [], nextId, planner } = {}) {
+  constructor({ name = 'Untitled factory', width, height, terrain, entities = [], nextId, planner, beltMaster = false } = {}) {
     this.name = name;
+    this.beltMaster = beltMaster; // Belt Master perk: more power per zombie
     this.planner = planner; // planner settings (targets, options), saved with the layout
     this.width = width;
     this.height = height;
@@ -360,6 +363,14 @@ export class Layout {
     return powerOf(this.entities);
   }
 
+  /**
+   * Power supply: zombies on the built-in and placed carousels, and what the
+   * layout's power use needs.
+   */
+  powerSupply() {
+    return powerSupply(this.power(), this.entities.filter((e) => e.kind === 'carousel').length, this.beltMaster);
+  }
+
   // ---- validation ----------------------------------------------------------
 
   /** @returns {Issue[]} */
@@ -429,6 +440,10 @@ export class Layout {
 
       for (const p of this.ports(e)) this._validatePort(e, p, add);
     }
+    const power = this.powerSupply();
+    if (power.missingCarousels) {
+      add('warning', null, `Power ${power.used} needs ${power.zombies} zombies on ${power.carouselsNeeded} carousels; the factory has ${power.carousels}: add ${power.missingCarousels} carousel(s)`, []);
+    }
     return issues;
   }
 
@@ -479,6 +494,7 @@ export class Layout {
       terrain: rows,
       entities: this.entities.map((e) => ({ ...e })),
       ...(this.planner ? { planner: structuredClone(this.planner) } : {}),
+      ...(this.beltMaster ? { beltMaster: true } : {}),
     };
   }
 
@@ -489,7 +505,7 @@ export class Layout {
   static fromJSON(json) {
     const data = /** @type {LayoutJSON} */ (typeof json === 'string' ? JSON.parse(json) : json);
     if (!Array.isArray(data.terrain)) throw new Error('Missing "terrain" rows');
-    const layout = new Layout({ name: data.name, width: 1, height: 1, entities: [], planner: data.planner });
+    const layout = new Layout({ name: data.name, width: 1, height: 1, entities: [], planner: data.planner, beltMaster: !!data.beltMaster });
     layout.setTerrainFromText(data.terrain.join('\n'));
     if (data.width) layout.resize({ right: data.width - layout.width });
     if (data.height) layout.resize({ bottom: data.height - layout.height });
@@ -562,6 +578,25 @@ function parseTerrainRows(lines) {
       return t;
     }),
   );
+}
+
+/**
+ * Power available from `placed` carousels on the floor plus the built-in ones,
+ * against `used` power: zombies and carousels that needs.
+ * @param {number} used
+ * @param {number} placed
+ * @param {boolean} beltMaster
+ */
+export function powerSupply(used, placed, beltMaster) {
+  const { perZombie, perZombieBeltMaster, zombiesPerCarousel, builtInCarousels } = ZOMBIE_POWER;
+  const each = beltMaster ? perZombieBeltMaster : perZombie;
+  const carousels = builtInCarousels + placed;
+  const zombies = Math.ceil(used / each);
+  const carouselsNeeded = Math.ceil(zombies / zombiesPerCarousel);
+  return {
+    used, perZombie: each, carousels, available: carousels * zombiesPerCarousel * each,
+    zombies, carouselsNeeded, missingCarousels: Math.max(0, carouselsNeeded - carousels),
+  };
 }
 
 /**

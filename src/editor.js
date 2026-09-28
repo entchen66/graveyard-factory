@@ -3,7 +3,7 @@
 
 import {
   DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
-  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, extensionsFor, recipesFor, entityBounds,
+  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, CAROUSEL_SIZE, extensionsFor, recipesFor, entityBounds,
 } from './catalog.js';
 import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
 import { drawLayout, loadArt } from './render.js';
@@ -65,6 +65,7 @@ const ENTITY_TOOLS = [
   { id: 'chest', name: 'Chest', key: 'h' },
   { id: 'distributor', name: 'Distributor', key: 'd' },
   { id: 'supply_station', name: 'Supply station', key: 'l' },
+  { id: 'carousel', name: 'Zombie carousel', key: 'z' },
 ];
 const TOOL_BY_KEY = Object.fromEntries([...TERRAIN_TOOLS, ...ENTITY_TOOLS].map((t) => [t.key, t.id]));
 
@@ -283,6 +284,10 @@ export class Editor {
       case 'chest': return { kind: 'chest', x: cell.x, y: cell.y, stock: this.opts.chestItem ? [this.opts.chestItem] : [], filters: {} };
       case 'distributor': return { kind: 'distributor', x: cell.x, y: cell.y, rot, material };
       case 'supply_station': return { kind: 'supply_station', x: cell.x, y: cell.y, rot };
+      case 'carousel': {
+        const off = Math.floor(CAROUSEL_SIZE / 2);
+        return { kind: 'carousel', x: cell.x - off, y: cell.y - off };
+      }
       case 'station': {
         const off = Math.floor(STATIONS[stationType].size / 2);
         return { kind: 'station', type: stationType, level, variant, recipe: recipe || null, extensions: [...extensions], x: cell.x - off, y: cell.y - off, rot };
@@ -738,9 +743,19 @@ export class Editor {
       ['Chests', byKind('chest')],
       ['Distributors', byKind('distributor')],
     ];
+    const p = l.powerSupply();
+    const beltMaster = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox' }));
+    beltMaster.checked = l.beltMaster;
+    beltMaster.addEventListener('change', () => this.mutate(() => { this.layout.beltMaster = beltMaster.checked; }));
     this.$('stats').replaceChildren(
       h('span', { class: 'power', title: 'Factory power: 1 per station, belt and chest' }, h('img', { src: POWER_ICON, alt: '' }), 'Power'),
-      h('b', {}, String(l.power())),
+      h('b', { class: p.missingCarousels ? 'over' : '' }, `${p.used} / ${p.available}`),
+      h('span', { title: `${p.perZombie} power per zombie, 4 zombies per carousel` }, 'Zombies needed'),
+      h('b', {}, String(p.zombies)),
+      h('span', { title: 'Carousels needed / the 4 built in plus any placed on the floor' }, 'Carousels'),
+      h('b', { class: p.missingCarousels ? 'over' : '' }, `${p.carouselsNeeded} / ${p.carousels}`),
+      h('label', { class: 'perk', title: 'Belt Master perk: 10 power per zombie instead of 7' }, beltMaster, h('img', { src: BELT_MASTER_ICON, alt: '' }), 'Belt Master'),
+      h('span', {}),
       ...rows.flatMap(([k, v]) => [h('span', {}, k), h('b', {}, String(v))]),
     );
   }
@@ -828,6 +843,7 @@ const TOOL_HINT = {
   station: 'Stations cannot rotate. R cycles through the four input/output layouts.',
   chest: 'Accepts from any side, outputs to neighbouring belts not pointing in. Filters pick the sides that output.',
   distributor: 'Raw-material source. Usually along the bottom of the factory.',
+  carousel: 'Zombie carousel (3×3): holds 4 zombies that power the factory. The factory has 4 built in.',
   supply_station: 'Takes "Supply: …" crates from a belt on its input side. The planner puts these near the top-right corner.',
 };
 

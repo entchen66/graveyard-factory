@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Layout, FLOOR, VOID } from '../src/model.js';
 import {
-  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, stationVariants, extensionsFor, extensionArt,
+  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, CAROUSEL_ART, BELT_MASTER_ICON, POWER_ICON, stationVariants, extensionsFor, extensionArt,
 } from '../src/catalog.js';
 import { factoryFloor, DISTRIBUTORS } from '../src/floor.js';
 
@@ -251,6 +251,9 @@ test('conveyor, chest, talent and extension art files exist', () => {
   }
   for (const c of Object.values(CHEST_LEVELS)) exists(c.art);
   for (const t of Object.values(TALENTS)) exists(t.icon);
+  exists(CAROUSEL_ART.src);
+  exists(BELT_MASTER_ICON);
+  exists(POWER_ICON);
   for (const [type, def] of Object.entries(STATIONS)) {
     for (const id of extensionsFor(type)) {
       exists(EXTENSIONS[id].icon);
@@ -291,4 +294,27 @@ test('factory power: 1 per station, belt and chest', () => {
   l.add({ kind: 'splitter', x: 8, y: 3, rot: E });       // no power listed
   l.add({ kind: 'distributor', x: 0, y: 7, rot: N, material: 'coal' });
   assert.equal(l.power(), 4);
+});
+
+test('power supply: 4 built-in carousels of 4 zombies, 7 power each (10 with Belt Master)', async () => {
+  const { powerSupply } = await import('../src/model.js');
+  assert.deepEqual(powerSupply(112, 0, false), { used: 112, perZombie: 7, carousels: 4, available: 112, zombies: 16, carouselsNeeded: 4, missingCarousels: 0 });
+  assert.equal(powerSupply(113, 0, false).missingCarousels, 1);
+  assert.equal(powerSupply(113, 1, false).missingCarousels, 0);
+  assert.equal(powerSupply(160, 0, true).missingCarousels, 0);
+  assert.equal(powerSupply(161, 0, true).zombies, 17);
+});
+
+test('carousels are 3x3 with no ports; too much power is a warning', () => {
+  const l = Layout.blank(40, 40);
+  const c = l.add({ kind: 'carousel', x: 1, y: 1 });
+  assert.equal(l.footprint(c).length, 9);
+  assert.deepEqual(l.ports(c), []);
+  for (let x = 0; x < 40; x++) for (let y = 10; y < 13; y++) l.add({ kind: 'belt', x, y, rot: E }); // 120 power
+  const warn = () => l.validate().filter((i) => i.severity === 'warning' && /carousel/.test(i.message));
+  assert.equal(warn().length, 0);                     // 4 built in + 1 placed = 140 power
+  l.remove(c.id);
+  assert.match(warn()[0].message, /add 1 carousel/);  // 112 < 120
+  l.beltMaster = true;
+  assert.equal(warn().length, 0);                     // 160 with Belt Master
 });

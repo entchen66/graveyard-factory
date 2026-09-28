@@ -412,6 +412,7 @@ export const ENTITY_KINDS = {
   chest: { name: 'Chest' },
   distributor: { name: 'Distribution station', rotatable: true, hasMaterial: true },
   supply_station: { name: 'Supply station', rotatable: true },
+  carousel: { name: 'Zombie carousel' },
   station: { name: 'Station' },
 };
 
@@ -472,6 +473,15 @@ export const isSupplyItem = (id) => id.startsWith('supply_');
 export const POWER_COST = { station: 1, belt: 1, chest: 1 };
 export const POWER_ICON = 'assets/ui/power.webp';
 
+// Power comes from zombies on zombie carousels (3x3, no ports: the prefab's
+// build collider). The factory starts with 4 carousels outside the floor plan;
+// more can be built on it. The Belt Master perk raises each zombie's power.
+export const ZOMBIE_POWER = { perZombie: 7, perZombieBeltMaster: 10, zombiesPerCarousel: 4, builtInCarousels: 4 };
+export const CAROUSEL_SIZE = 3;
+/** Art relative to the 3x3 footprint's top-left, game px (from the prefab). */
+export const CAROUSEL_ART = { src: 'assets/stations/carousel.webp', dx: 10, dy: -46 };
+export const BELT_MASTER_ICON = 'assets/ui/perk_beltmaster.webp';
+
 // Belts can be fed from their sides (merging), confirmed in-game.
 export const BELT_ACCEPTS_FROM_SIDES = true;
 // Must the underground conveyor's gap cell be factory floor?
@@ -485,8 +495,8 @@ export const UNDERGROUND_GAP = 2; // index of the gap cell along the conveyor
  * @returns {Cell[]}
  */
 export function entityCells(e) {
-  if (e.kind === 'station') {
-    const s = STATIONS[e.type].size;
+  if (e.kind === 'station' || e.kind === 'carousel') {
+    const s = e.kind === 'carousel' ? CAROUSEL_SIZE : STATIONS[e.type].size;
     const cells = [];
     for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) cells.push({ x: e.x + dx, y: e.y + dy, gap: false });
     return cells;
