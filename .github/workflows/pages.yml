@@ -1,0 +1,50 @@
+# Test, then publish the static site to GitHub Pages.
+# Enable it once in the repo: Settings -> Pages -> Source: GitHub Actions.
+name: Pages
+
+on:
+  push:
+    branches: [main, site]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      # Type-check the JSDoc types (TypeScript is fetched here only; the app has no dependencies).
+      - run: npm run typecheck
+      # Only what the page needs: no tests, art masters or local tooling.
+      - name: Stage the site
+        run: |
+          mkdir _site
+          cp -r index.html styles.css src assets .nojekyll _site/
+          find _site -type f | sed 's|^_site/||' | sort > /tmp/files.txt
+          echo "$(wc -l < /tmp/files.txt) files, $(du -sb _site | cut -f1) bytes"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Factory Floor Editor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <input id="layout-name" class="name" type="text" spellcheck="false" aria-label="Layout name">
+    <div class="group">
+      <button data-action="clear" title="Remove everything placed on the floor (distribution stations stay)">Clear</button>
+    </div>
+    <div class="group">
+      <button data-action="import">Import JSON</button>
+      <button data-action="export">Export JSON</button>
+      <input id="import-file" type="file" accept=".json,application/json" hidden>
+    </div>
+    <div class="group">
+      <button data-action="undo" title="Undo (Ctrl+Z)">Undo</button>
+      <button data-action="redo" title="Redo (Ctrl+Y)">Redo</button>
+      <button data-action="fit" title="Fit layout in view (0)">Fit</button>
+    </div>
+    <div class="group toggles">
+      <label><input type="checkbox" id="show-background" checked> Background</label>
+      <label><input type="checkbox" id="show-grid" checked> Grid</label>
+      <label><input type="checkbox" id="show-ports" checked> Ports</label>
+      <label><input type="checkbox" id="show-flow" checked> Flow</label>
+      <label><input type="checkbox" id="show-issues" checked> Issues</label>
+    </div>
+  </header>
+
+  <main class="main">
+    <aside class="sidebar">
+      <section>
+        <h2>Terrain</h2>
+        <div class="tools" id="terrain-tools"></div>
+      </section>
+      <section>
+        <h2>Place</h2>
+        <div class="tools" id="entity-tools"></div>
+      </section>
+      <section id="tool-options"></section>
+      <section id="inspector"></section>
+      <section>
+        <h2>Issues <span id="issue-count" class="badge"></span></h2>
+        <ul id="issues" class="issues"></ul>
+      </section>
+      <section>
+        <h2>Stats</h2>
+        <div id="stats" class="stats"></div>
+      </section>
+      <section class="help">
+        <h2>Controls</h2>
+        <ul>
+          <li><kbd>Drag</kbd> paint · <kbd>Shift</kbd>+drag rectangle</li>
+          <li><kbd>R</kbd> / <kbd>Shift</kbd>+<kbd>R</kbd> rotate</li>
+          <li><kbd>Right-drag</kbd> erase entities</li>
+          <li><kbd>Wheel</kbd> zoom · <kbd>Middle</kbd>/<kbd>Space</kbd>+drag pan</li>
+          <li><kbd>Del</kbd> delete selected · <kbd>Esc</kbd> select tool</li>
+          <li>Belts follow drag direction</li>
+        </ul>
+      </section>
+    </aside>
+    <div class="canvas-wrap" id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div class="preview-banner">Planner preview — Apply or Discard in the Planner panel</div>
+    </div>
+    <aside class="sidebar planner-panel" id="planner"></aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-cell"></span>
+    <span id="status-msg"></span>
+  </footer>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

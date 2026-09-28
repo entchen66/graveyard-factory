@@ -1,0 +1,986 @@
+// @ts-check
+// Interactive floor-plan editor: tools, input handling, side panels, history.
+
+import {
+  DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
+  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, extensionsFor, recipesFor, entityBounds,
+} from './catalog.js';
+import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
+import { drawLayout, loadArt } from './render.js';
+import { factoryFloor } from './floor.js';
+import { Background } from './background.js';
+import { PlannerPanel } from './planner/panel.js';
+
+/** @typedef {import('./types.js').Entity} Entity */
+/** @typedef {import('./types.js').EntitySpec} EntitySpec */
+/** @typedef {import('./types.js').EntityKind} EntityKind */
+/** @typedef {import('./types.js').StationType} StationType */
+/** @typedef {import('./types.js').Dir} Dir */
+/** @typedef {import('./types.js').Item} Item */
+/** @typedef {import('./types.js').Recipe} Recipe */
+/** @typedef {import('./types.js').Issue} Issue */
+/** @typedef {import('./types.js').View} View */
+
+/** @typedef {{ x: number, y: number }} XY */
+/** Toolbar entry; terrain tools also carry the terrain they paint. @typedef {{ id: string, name: string, key: string, terrain?: string, swatch?: string }} ToolDef */
+/**
+ * Placement options for the current tool.
+ * @typedef {object} ToolOpts
+ * @property {string} material
+ * @property {StationType} stationType
+ * @property {number} level
+ * @property {string} variant
+ * @property {string} recipe '' for none
+ * @property {string[]} extensions
+ * @property {string} chestItem
+ */
+/** @typedef {Pick<ToolOpts, 'stationType' | 'level' | 'variant' | 'extensions' | 'recipe'>} StationOpts */
+/** @typedef {{ type?: StationType, level?: number }} StationChange */
+/** @typedef {{ entity: EntitySpec, ok: boolean }} Ghost */
+/**
+ * Pointer drag in progress; `before` is the snapshot to commit as one undo step.
+ * @typedef {{ mode: 'pan', sx: number, sy: number, ox: number, oy: number, before?: undefined }
+ *   | { mode: 'erase' | 'paint' | 'belt', before: string, last: XY }
+ *   | { mode: 'rect', before: string, rect: { x0: number, y0: number, x1: number, y1: number } }
+ *   | { mode: 'move', before: string, id: number, gx: number, gy: number, ghost: Ghost }} Drag
+ */
+/** Attributes for `h()`; values are stringified by setAttribute. @typedef {Record<string, string | number>} Attrs */
+
+const STORAGE_KEY = 'factory-floor-editor/v1';
+const MIN_CELL = 4, MAX_CELL = 96;
+
+/** @type {ToolDef[]} */
+const TERRAIN_TOOLS = [
+  { id: 'floor', name: 'Floor', terrain: FLOOR, key: 'f', swatch: '#d9d4c7' },
+  { id: 'void', name: 'Outside', terrain: VOID, key: 'x', swatch: '#15171c' },
+];
+/** @type {ToolDef[]} */
+const ENTITY_TOOLS = [
+  { id: 'select', name: 'Select', key: 'v' },
+  { id: 'erase', name: 'Erase', key: 'e' },
+  { id: 'belt', name: 'Belt', key: 'b' },
+  { id: 'underground', name: 'Underground', key: 'u' },
+  { id: 'splitter', name: 'Splitter', key: 'p' },
+  { id: 'station', name: 'Station', key: 's' },
+  { id: 'chest', name: 'Chest', key: 'h' },
+  { id: 'distributor', name: 'Distributor', key: 'd' },
+  { id: 'supply_station', name: 'Supply station', key: 'l' },
+];
+const TOOL_BY_KEY = Object.fromEntries([...TERRAIN_TOOLS, ...ENTITY_TOOLS].map((t) => [t.key, t.id]));
+
+export class Editor {
+  /** @param {Document} root */
+  constructor(root) {
+    /** @param {string} id */
+    this.$ = (id) => root.getElementById(id);
+    this.canvas = /** @type {HTMLCanvasElement} */ (this.$('canvas'));
+    this.ctx = this.canvas.getContext('2d');
+    /** @type {View} */
+    this.view = { cell: 24, ox: 20, oy: 20, dpr: window.devicePixelRatio || 1 };
+    /** @type {string} */
+    this.tool = 'select';
+    // Rotation is remembered per placement tool.
+    /** @type {Record<string, number>} */
+    this.rots = { belt: 1, underground: 1, splitter: 0, distributor: 0, supply_station: 2 };
+    /** @type {ToolOpts} */
+    this.opts = { material: RAW_MATERIALS[0].id, stationType: 'assembly_bench', level: 1, variant: defaultVariant('assembly_bench'), recipe: '', extensions: [], chestItem: '' };
+    /** @type {number} */
+    this.selectedId = null;
+    /** @type {XY} */
+    this.hover = null;
+    /** @type {Drag} */
+    this.drag = null;
+    this.spaceHeld = false;
+    /** @type {string[]} */
+    this.undoStack = [];
+    /** @type {string[]} */
+    this.redoStack = [];
+    /** @type {Issue[]} */
+    this.issues = [];
+    this.layout = this.loadSaved() ?? factoryFloor();
+    this.background = new Background(() => this.requestDraw());
+    loadArt(() => this.requestDraw());
+    /** @type {Layout} */
+    this.preview = null; // planner result shown instead of the layout until applied
+
+    this.buildToolButtons();
+    this.bindTopbar();
+    this.bindCanvas();
+    this.bindKeyboard();
+    new ResizeObserver(() => this.resizeCanvas()).observe(this.$('canvas-wrap'));
+    this.resizeCanvas();
+    this.fit();
+    this.planner = new PlannerPanel(this, this.$('planner'));
+    this.setTool('select');
+    this.changed({ save: false });
+  }
+
+  // ---- state & history -----------------------------------------------------
+
+  snapshot() {
+    return JSON.stringify(this.layout.toJSON());
+  }
+
+  // Run `fn` as one undoable step.
+  /** @param {() => void} fn */
+  mutate(fn) {
+    const before = this.snapshot();
+    fn();
+    this.commit(before);
+  }
+
+  /** @param {string} before */
+  commit(before) {
+    if (before === this.snapshot()) { this.requestDraw(); return; }
+    this.undoStack.push(before);
+    if (this.undoStack.length > 200) this.undoStack.shift();
+    this.redoStack = [];
+    this.changed();
+  }
+
+  /** @param {Layout} layout */
+  replaceLayout(layout, { fit = true } = {}) {
+    this.selectedId = null;
+    this.mutate(() => { this.layout = layout; });
+    if (fit) this.fit();
+  }
+
+  undo() { this.stepHistory(this.undoStack, this.redoStack, 'Undo'); }
+  redo() { this.stepHistory(this.redoStack, this.undoStack, 'Redo'); }
+
+  /** @param {string[]} from @param {string[]} to @param {string} label */
+  stepHistory(from, to, label) {
+    if (!from.length) return;
+    to.push(this.snapshot());
+    this.layout = Layout.fromJSON(from.pop());
+    this.changed();
+    this.status(label);
+  }
+
+  changed({ save = true } = {}) {
+    if (this.selectedId != null && !this.layout.getEntity(this.selectedId)) this.selectedId = null;
+    this.issues = this.layout.validate();
+    if (save) this.save();
+    /** @type {HTMLInputElement} */ (this.$('layout-name')).value = this.layout.name;
+    /** @type {HTMLButtonElement} */ (document.querySelector('[data-action=undo]')).disabled = !this.undoStack.length;
+    /** @type {HTMLButtonElement} */ (document.querySelector('[data-action=redo]')).disabled = !this.redoStack.length;
+    this.renderToolOptions();
+    this.renderInspector();
+    this.renderIssues();
+    this.renderStats();
+    if (this.planner && !this.planner.running) this.planner.render();
+    this.requestDraw();
+  }
+
+  // Show a planner result instead of the layout (null to go back to editing).
+  /** @param {Layout} layout */
+  setPreview(layout) {
+    this.preview = layout;
+    /** @type {Issue[]} */
+    this.previewIssues = layout ? layout.validate() : null;
+    this.$('canvas-wrap').classList.toggle('previewing', !!layout);
+    this.requestDraw();
+  }
+
+  save() {
+    try { localStorage.setItem(STORAGE_KEY, this.snapshot()); } catch { /* storage unavailable */ }
+  }
+
+  loadSaved() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? Layout.fromJSON(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ---- view ----------------------------------------------------------------
+
+  resizeCanvas() {
+    const wrap = this.$('canvas-wrap');
+    this.view.dpr = window.devicePixelRatio || 1;
+    this.canvas.width = Math.max(1, Math.round(wrap.clientWidth * this.view.dpr));
+    this.canvas.height = Math.max(1, Math.round(wrap.clientHeight * this.view.dpr));
+    this.requestDraw();
+  }
+
+  fit() {
+    const w = this.canvas.width / this.view.dpr, h = this.canvas.height / this.view.dpr;
+    const cell = Math.floor(Math.min((w - 40) / this.layout.width, (h - 40) / this.layout.height));
+    this.view.cell = clamp(cell, MIN_CELL, 48);
+    this.view.ox = Math.round((w - this.layout.width * this.view.cell) / 2);
+    this.view.oy = Math.round((h - this.layout.height * this.view.cell) / 2);
+    this.requestDraw();
+  }
+
+  /** @param {number} x @param {number} y */
+  centerOn(x, y) {
+    const w = this.canvas.width / this.view.dpr, h = this.canvas.height / this.view.dpr;
+    this.view.ox = Math.round(w / 2 - (x + 0.5) * this.view.cell);
+    this.view.oy = Math.round(h / 2 - (y + 0.5) * this.view.cell);
+    this.requestDraw();
+  }
+
+  requestDraw() {
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => {
+      this._raf = null;
+      drawLayout(this.ctx, this.preview ?? this.layout, this.view, {
+        showGrid: /** @type {HTMLInputElement} */ (this.$('show-grid')).checked,
+        showPorts: /** @type {HTMLInputElement} */ (this.$('show-ports')).checked,
+        showFlow: /** @type {HTMLInputElement} */ (this.$('show-flow')).checked,
+        showIssues: /** @type {HTMLInputElement} */ (this.$('show-issues')).checked,
+        issues: this.preview ? this.previewIssues : this.issues,
+        background: this.background,
+        editingTerrain: !!this.terrainTool(),
+        selectedId: this.selectedId,
+        hover: this.hover,
+        // Tool ghosts have no id yet; render only draws them.
+        ghost: /** @type {{ entity: Entity, ok: boolean }} */ (this.currentGhost()), // the ghost has no id yet; drawing never reads it
+        rect: this.drag?.mode === 'rect' ? this.drag.rect : null,
+      });
+    });
+  }
+
+  // ---- tools ---------------------------------------------------------------
+
+  /** @param {string} id */
+  setTool(id) {
+    this.tool = id;
+    for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.tools button'))) b.classList.toggle('active', b.dataset.tool === id);
+    this.renderToolOptions();
+    this.updateCursor();
+    this.requestDraw();
+  }
+
+  buildToolButtons() {
+    /** @param {ToolDef} t */
+    const make = (t) => {
+      const b = h('button', { 'data-tool': t.id, title: `${t.name} (${t.key.toUpperCase()})` },
+        t.swatch ? h('span', { class: 'swatch', style: `background:${t.swatch}` }) : null,
+        t.name, h('kbd', {}, t.key.toUpperCase()));
+      b.addEventListener('click', () => this.setTool(t.id));
+      return b;
+    };
+    this.$('terrain-tools').append(...TERRAIN_TOOLS.map(make));
+    this.$('entity-tools').append(...ENTITY_TOOLS.map(make));
+  }
+
+  terrainTool() {
+    return TERRAIN_TOOLS.find((t) => t.id === this.tool);
+  }
+
+  // Entity the current tool would place at the hovered cell.
+  /** @param {XY} cell @returns {EntitySpec} */
+  toolEntity(cell) {
+    const { material, stationType, level, variant, recipe, extensions } = this.opts;
+    const rot = this.rots[this.tool];
+    switch (this.tool) {
+      case 'belt': return { kind: 'belt', x: cell.x, y: cell.y, rot };
+      case 'underground': return { kind: 'underground', x: cell.x, y: cell.y, rot };
+      case 'splitter': return { kind: 'splitter', x: cell.x, y: cell.y, rot };
+      case 'chest': return { kind: 'chest', x: cell.x, y: cell.y, stock: this.opts.chestItem ? [this.opts.chestItem] : [], filters: {} };
+      case 'distributor': return { kind: 'distributor', x: cell.x, y: cell.y, rot, material };
+      case 'supply_station': return { kind: 'supply_station', x: cell.x, y: cell.y, rot };
+      case 'station': {
+        const off = Math.floor(STATIONS[stationType].size / 2);
+        return { kind: 'station', type: stationType, level, variant, recipe: recipe || null, extensions: [...extensions], x: cell.x - off, y: cell.y - off, rot };
+      }
+      default: return null;
+    }
+  }
+
+  /** @returns {Ghost} */
+  currentGhost() {
+    if (this.drag?.mode === 'move') return this.drag.ghost;
+    if (this.drag || !this.hover || this.spaceHeld) return null;
+    const entity = this.toolEntity(this.hover);
+    if (!entity) return null;
+    const ignore = this.tool === 'belt' && this.layout.entityAt(entity.x, entity.y)?.kind === 'belt'
+      ? [this.layout.entityAt(entity.x, entity.y).id] : [];
+    return { entity, ok: this.layout.canPlace(entity, ignore).ok };
+  }
+
+  /** @param {number} delta */
+  rotate(delta) {
+    const sel = this.tool === 'select' && this.layout.getEntity(this.selectedId);
+    if (sel?.kind === 'station') {
+      this.mutate(() => this.layout.update(sel.id, { variant: cycleVariant(sel.type, sel.variant, delta) }));
+    } else if (sel && ENTITY_KINDS[sel.kind].rotatable) {
+      const rotated = { ...sel, rot: mod4(sel.rot + delta) };
+      const check = this.layout.canPlace(rotated, [sel.id]);
+      if (!check.ok) return this.status(check.reason, true);
+      this.mutate(() => this.layout.update(sel.id, { rot: rotated.rot }));
+    } else if (!sel && this.tool === 'station') {
+      this.opts.variant = cycleVariant(this.opts.stationType, this.opts.variant, delta);
+      this.renderToolOptions();
+      this.requestDraw();
+    } else if (!sel && this.tool in this.rots) {
+      this.rots[this.tool] = mod4(this.rots[this.tool] + delta);
+      this.renderToolOptions();
+      this.requestDraw();
+    }
+  }
+
+  deleteSelected() {
+    if (this.selectedId == null) return;
+    this.mutate(() => this.layout.remove(this.selectedId));
+    this.selectedId = null;
+    this.changed();
+  }
+
+  /** @param {number} id */
+  select(id) {
+    this.selectedId = id;
+    this.renderInspector();
+    this.requestDraw();
+  }
+
+  // ---- canvas input --------------------------------------------------------
+
+  /** @param {MouseEvent} ev @returns {XY} */
+  cellAt(ev) {
+    const r = this.canvas.getBoundingClientRect();
+    return {
+      x: Math.floor((ev.clientX - r.left - this.view.ox) / this.view.cell),
+      y: Math.floor((ev.clientY - r.top - this.view.oy) / this.view.cell),
+    };
+  }
+
+  bindCanvas() {
+    const c = this.canvas;
+    c.addEventListener('contextmenu', (ev) => ev.preventDefault());
+    c.addEventListener('pointerdown', (ev) => this.onPointerDown(ev));
+    c.addEventListener('pointermove', (ev) => this.onPointerMove(ev));
+    c.addEventListener('pointerup', (ev) => this.onPointerUp(ev));
+    c.addEventListener('pointercancel', (ev) => this.onPointerUp(ev));
+    c.addEventListener('pointerleave', () => { if (!this.drag) { this.hover = null; this.updateStatusCell(); this.requestDraw(); } });
+    c.addEventListener('wheel', (ev) => {
+      ev.preventDefault();
+      const r = c.getBoundingClientRect();
+      const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+      const cell = clamp(this.view.cell * Math.exp(-ev.deltaY * 0.0015), MIN_CELL, MAX_CELL);
+      const k = cell / this.view.cell;
+      this.view.ox = sx - (sx - this.view.ox) * k;
+      this.view.oy = sy - (sy - this.view.oy) * k;
+      this.view.cell = cell;
+      this.requestDraw();
+    }, { passive: false });
+  }
+
+  /** @param {PointerEvent} ev */
+  onPointerDown(ev) {
+    if (this.drag) return;
+    this.canvas.setPointerCapture(ev.pointerId);
+    const cell = this.cellAt(ev);
+    const before = this.snapshot();
+
+    if (ev.button === 1 || (ev.button === 0 && this.spaceHeld) || (this.preview && ev.button === 0)) {
+      this.drag = { mode: 'pan', sx: ev.clientX, sy: ev.clientY, ox: this.view.ox, oy: this.view.oy };
+      if (this.preview && ev.button === 0 && !this.spaceHeld) this.status('Planner preview: Apply or Discard it in the Planner panel to edit again');
+    } else if (this.preview) {
+      return;
+    } else if (ev.button === 2) {
+      this.drag = { mode: 'erase', before, last: cell };
+      this.eraseAt(cell);
+    } else if (ev.button !== 0) {
+      return;
+    } else if (this.terrainTool()) {
+      if (ev.shiftKey) {
+        this.drag = { mode: 'rect', before, rect: { x0: cell.x, y0: cell.y, x1: cell.x, y1: cell.y } };
+      } else {
+        this.drag = { mode: 'paint', before, last: cell };
+        this.layout.setTerrain(cell.x, cell.y, this.terrainTool().terrain);
+      }
+    } else if (this.tool === 'select') {
+      const e = this.layout.entityAt(cell.x, cell.y) ?? this.layout.gapAt(cell.x, cell.y);
+      if (e) {
+        this.select(e.id);
+        this.drag = { mode: 'move', before, id: e.id, gx: cell.x - e.x, gy: cell.y - e.y, ghost: null };
+      } else {
+        this.select(null);
+        this.drag = { mode: 'pan', sx: ev.clientX, sy: ev.clientY, ox: this.view.ox, oy: this.view.oy };
+      }
+    } else if (this.tool === 'erase') {
+      this.drag = { mode: 'erase', before, last: cell };
+      this.eraseAt(cell);
+    } else if (this.tool === 'belt') {
+      this.drag = { mode: 'belt', before, last: cell };
+      this.placeBelt(cell, this.rots.belt);
+    } else {
+      const entity = this.toolEntity(cell);
+      const check = this.layout.canPlace(entity);
+      if (check.ok) this.mutate(() => this.select(this.layout.add(entity).id));
+      else this.status(check.reason, true);
+    }
+    this.updateCursor();
+    this.requestDraw();
+  }
+
+  /** @param {PointerEvent} ev */
+  onPointerMove(ev) {
+    const cell = this.cellAt(ev);
+    const moved = !this.hover || cell.x !== this.hover.x || cell.y !== this.hover.y;
+    this.hover = cell;
+    if (moved) this.updateStatusCell();
+    const d = this.drag;
+    if (!d) { if (moved) { this.updateCursor(); this.requestDraw(); } return; }
+
+    if (d.mode === 'pan') {
+      this.view.ox = d.ox + ev.clientX - d.sx;
+      this.view.oy = d.oy + ev.clientY - d.sy;
+    } else if (!moved) {
+      return;
+    } else if (d.mode === 'rect') {
+      d.rect.x1 = cell.x; d.rect.y1 = cell.y;
+    } else if (d.mode === 'paint') {
+      for (const p of path4(d.last, cell)) this.layout.setTerrain(p.x, p.y, this.terrainTool().terrain);
+      d.last = cell;
+    } else if (d.mode === 'erase') {
+      for (const p of path4(d.last, cell)) this.eraseAt(p);
+      d.last = cell;
+    } else if (d.mode === 'belt') {
+      let prev = d.last;
+      for (const p of path4(d.last, cell)) {
+        const dir = dirBetween(prev, p);
+        const prevBelt = this.layout.entityAt(prev.x, prev.y);
+        if (prevBelt?.kind === 'belt') this.layout.update(prevBelt.id, { rot: dir });
+        this.placeBelt(p, dir);
+        this.rots.belt = dir;
+        prev = p;
+      }
+      d.last = cell;
+    } else if (d.mode === 'move') {
+      const e = this.layout.getEntity(d.id);
+      const ghost = { ...e, x: cell.x - d.gx, y: cell.y - d.gy };
+      d.ghost = ghost.x === e.x && ghost.y === e.y ? null : { entity: ghost, ok: this.layout.canPlace(ghost, [e.id]).ok };
+    }
+    this.requestDraw();
+  }
+
+  /** @param {PointerEvent} ev */
+  onPointerUp(ev) {
+    const d = this.drag;
+    if (!d) return;
+    this.drag = null;
+    if (this.canvas.hasPointerCapture(ev.pointerId)) this.canvas.releasePointerCapture(ev.pointerId);
+    if (d.mode === 'rect') {
+      const { x0, y0, x1, y1 } = d.rect;
+      for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) {
+        for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) this.layout.setTerrain(x, y, this.terrainTool().terrain);
+      }
+    } else if (d.mode === 'move' && d.ghost) {
+      if (d.ghost.ok) this.layout.update(d.id, { x: d.ghost.entity.x, y: d.ghost.entity.y });
+      else this.status(this.layout.canPlace(d.ghost.entity, [d.id]).reason, true);
+    }
+    if (d.before) this.commit(d.before);
+    this.updateCursor();
+    this.requestDraw();
+  }
+
+  /** @param {XY} cell @param {number} rot */
+  placeBelt(cell, rot) {
+    const existing = this.layout.entityAt(cell.x, cell.y);
+    if (existing?.kind === 'belt') { this.layout.update(existing.id, { rot }); return; }
+    /** @type {EntitySpec} */
+    const belt = { kind: 'belt', x: cell.x, y: cell.y, rot };
+    if (this.layout.canPlace(belt).ok) this.layout.add(belt);
+  }
+
+  /** @param {XY} cell */
+  eraseAt(cell) {
+    const e = this.layout.entityAt(cell.x, cell.y);
+    if (e) this.layout.remove(e.id);
+  }
+
+  updateCursor() {
+    let cursor = 'crosshair';
+    if (this.drag?.mode === 'pan') cursor = 'grabbing';
+    else if (this.spaceHeld) cursor = 'grab';
+    else if (this.tool === 'select') cursor = this.hover && this.layout.entityAt(this.hover.x, this.hover.y) ? 'move' : 'default';
+    this.canvas.style.cursor = cursor;
+  }
+
+  // ---- keyboard ------------------------------------------------------------
+
+  bindKeyboard() {
+    window.addEventListener('keydown', (ev) => {
+      if (/** @type {HTMLElement} */ (ev.target).matches?.('input, textarea, select')) {
+        if (ev.key === 'Escape') /** @type {HTMLElement} */ (ev.target).blur();
+        return;
+      }
+      const ctrl = ev.ctrlKey || ev.metaKey;
+      const key = ev.key.toLowerCase();
+      if (this.preview) {
+        if (ev.key === 'Escape') this.planner.discard();
+        if (ev.key === '0') this.fit();
+        if (ev.key === ' ') { ev.preventDefault(); this.spaceHeld = true; this.updateCursor(); }
+        return; // no editing while a planner preview is shown
+      }
+      if (ctrl && key === 'z') { ev.preventDefault(); ev.shiftKey ? this.redo() : this.undo(); return; }
+      if (ctrl && key === 'y') { ev.preventDefault(); this.redo(); return; }
+      if (ctrl || ev.altKey) return;
+      if (ev.key === ' ') { ev.preventDefault(); this.spaceHeld = true; this.updateCursor(); this.requestDraw(); return; }
+      if (key === 'r') { this.rotate(ev.shiftKey ? -1 : 1); return; }
+      if (ev.key === 'Delete' || ev.key === 'Backspace') { this.deleteSelected(); return; }
+      if (ev.key === 'Escape') { this.tool === 'select' ? this.select(null) : this.setTool('select'); return; }
+      if (key === '0') { this.fit(); return; }
+      if (TOOL_BY_KEY[key]) this.setTool(TOOL_BY_KEY[key]);
+    });
+    window.addEventListener('keyup', (ev) => {
+      if (ev.key === ' ') { this.spaceHeld = false; this.updateCursor(); this.requestDraw(); }
+    });
+  }
+
+  // ---- top bar -------------------------------------------------------------
+
+  bindTopbar() {
+    /** @type {Record<string, () => void>} */
+    const actions = {
+      clear: () => this.clear(),
+      import: () => this.$('import-file').click(),
+      export: () => this.exportJSON(),
+      undo: () => this.undo(),
+      redo: () => this.redo(),
+      fit: () => this.fit(),
+    };
+    for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-action]'))) {
+      b.addEventListener('click', () => actions[b.dataset.action]());
+    }
+    this.$('import-file').addEventListener('change', async (ev) => {
+      const file = /** @type {HTMLInputElement} */ (ev.target).files[0];
+      /** @type {HTMLInputElement} */ (ev.target).value = '';
+      if (!file) return;
+      try {
+        this.replaceLayout(Layout.fromJSON(await file.text()));
+        this.status(`Imported ${file.name}`);
+      } catch (err) {
+        this.status(`Import failed: ${/** @type {Error} */ (err).message}`, true);
+      }
+    });
+    this.$('layout-name').addEventListener('change', (ev) => {
+      this.mutate(() => { this.layout.name = /** @type {HTMLInputElement} */ (ev.target).value.trim() || 'Untitled factory'; });
+    });
+    for (const id of ['show-grid', 'show-ports', 'show-flow', 'show-issues']) {
+      this.$(id).addEventListener('change', () => this.requestDraw());
+    }
+    this.$('show-background').addEventListener('change', (ev) => {
+      this.background.visible = /** @type {HTMLInputElement} */ (ev.target).checked;
+      this.requestDraw();
+    });
+  }
+
+  // Remove everything placed on the floor; the floor and its distributors stay.
+  clear() {
+    if (this.preview) this.planner.discard();
+    this.selectedId = null;
+    const n = this.layout.entities.filter((e) => e.kind !== 'distributor').length;
+    this.mutate(() => {
+      for (const e of this.layout.entities.filter((x) => x.kind !== 'distributor')) this.layout.remove(e.id);
+    });
+    this.status(n ? `Cleared ${n} pieces (Undo to go back)` : 'Nothing to clear');
+  }
+
+  exportJSON() {
+    const blob = new Blob([formatLayoutJSON(this.layout.toJSON())], { type: 'application/json' });
+    const a = h('a', { href: URL.createObjectURL(blob), download: `${slug(this.layout.name)}.json` });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ---- side panels ---------------------------------------------------------
+
+  renderToolOptions() {
+    const el = this.$('tool-options');
+    el.replaceChildren();
+    const t = this.tool;
+    if (this.terrainTool()) {
+      el.append(h('h2', {}, `${this.terrainTool().name} tool`),
+        h('p', { class: 'hint' }, 'Drag to paint cells. Hold Shift and drag to fill a rectangle.'));
+      return;
+    }
+    if (t === 'select') {
+      el.append(h('h2', {}, 'Select tool'),
+        h('p', { class: 'hint' }, 'Click an entity to inspect it, drag it to move. Drag empty space to pan.'));
+      return;
+    }
+    if (t === 'erase') {
+      el.append(h('h2', {}, 'Erase tool'), h('p', { class: 'hint' }, 'Click or drag to remove belts, stations and chests.'));
+      return;
+    }
+    /** @param {Partial<ToolOpts>} patch */
+    const setOpt = (patch) => { Object.assign(this.opts, patch); this.renderToolOptions(); this.requestDraw(); };
+    el.append(h('h2', {}, `Place ${ENTITY_KINDS[/** @type {EntityKind} */ (t)].name.toLowerCase()}`));
+    if (t === 'station') {
+      el.append(
+        field('Type', typeSelect(this.opts.stationType, (v) => setOpt(stationPatch(this.opts, { type: v })))),
+        field('Level', levelSelect(this.opts.stationType, this.opts.level, (v) => setOpt(stationPatch(this.opts, { level: v })))),
+        field('Layout', variantSelect(this.opts.stationType, this.opts.variant, (v) => setOpt({ variant: v }))),
+        field('Recipe', recipeSelect(this.opts.stationType, this.opts.level, this.opts.recipe,
+          (v) => setOpt({ recipe: v, extensions: withRequired(this.opts.extensions, v) }))),
+      );
+      if (this.opts.recipe) el.append(recipeInfo(this.opts.stationType, RECIPE_BY_ID[this.opts.recipe]));
+      el.append(field('Extensions', extensionButtons(this.opts.stationType, this.opts.extensions, this.opts.recipe,
+        (list) => setOpt({ extensions: list }))));
+    }
+    if (ENTITY_KINDS[/** @type {EntityKind} */ (t)].hasMaterial) {
+      el.append(field('Material', materialSelect(t, this.opts.material, (v) => setOpt({ material: v }))));
+    }
+    if (t === 'chest') {
+      el.append(field('Stock', materialSelect(t, this.opts.chestItem, (v) => setOpt({ chestItem: v }), { none: '— empty —' })));
+    }
+    if (ENTITY_KINDS[/** @type {EntityKind} */ (t)].rotatable) {
+      el.append(field(ROT_LABEL[t], rotButtons(this.rots[t], (r) => { this.rots[t] = r; setOpt({}); })));
+    }
+    el.append(h('p', { class: 'hint' }, TOOL_HINT[t]));
+  }
+
+  renderInspector() {
+    const el = this.$('inspector');
+    el.replaceChildren();
+    const e = this.layout.getEntity(this.selectedId);
+    if (!e) return;
+    /** @param {Partial<Entity>} patch */
+    const set = (patch) => {
+      const next = { ...e, ...patch };
+      const check = this.layout.canPlace(next, [e.id]);
+      if (!check.ok) { this.status(check.reason, true); this.renderInspector(); return; }
+      this.mutate(() => this.layout.update(e.id, patch));
+    };
+    el.append(h('h2', {}, `Selected: ${e.kind === 'station' ? STATIONS[e.type].name : ENTITY_KINDS[e.kind].name}`));
+    const b = entityBounds(e);
+    el.append(field('Position', h('span', {}, `${e.x}, ${e.y}${b.w * b.h > 1 ? ` (${b.w}×${b.h})` : ''}`)));
+    if (e.kind === 'station') {
+      el.append(
+        field('Type', typeSelect(e.type, (v) => set(stationEntityPatch(e, { type: v })))),
+        field('Level', levelSelect(e.type, e.level, (v) => set(stationEntityPatch(e, { level: v })))),
+        field('Layout', variantSelect(e.type, e.variant, (v) => set({ variant: v }))),
+        field('Recipe', recipeSelect(e.type, e.level, e.recipe ?? '',
+          (v) => set({ recipe: v || null, extensions: withRequired(e.extensions, v) }))),
+      );
+      if (RECIPE_BY_ID[e.recipe]) el.append(recipeInfo(e.type, RECIPE_BY_ID[e.recipe]));
+      el.append(field('Extensions', extensionButtons(e.type, e.extensions, e.recipe, (list) => set({ extensions: list }))));
+    }
+    if (ENTITY_KINDS[e.kind].hasMaterial) {
+      el.append(field('Material', materialSelect(e.kind, e.material, (v) => set({ material: v }))));
+    }
+    if (e.kind === 'chest') this.renderChestFields(el, e, set);
+    if (ENTITY_KINDS[e.kind].rotatable) {
+      el.append(field(ROT_LABEL[e.kind], rotButtons(e.rot, (r) => set({ rot: r }))));
+    }
+    const locked = h('input', { type: 'checkbox', title: 'The planner keeps locked entities in place' });
+    locked.checked = !!e.locked;
+    locked.addEventListener('change', () => set({ locked: locked.checked }));
+    el.append(field('Locked', h('label', {}, locked, ' keep in planner')));
+    const del = h('button', { class: 'danger' }, 'Delete');
+    del.addEventListener('click', () => this.deleteSelected());
+    el.append(h('div', { class: 'row-actions' }, del));
+  }
+
+  /** @param {HTMLElement} el @param {Entity} e @param {(patch: Partial<Entity>) => void} set */
+  renderChestFields(el, e, set) {
+    el.append(field('Chest', selectEl(Object.entries(CHEST_LEVELS).map(([l, c]) => [l, `${c.name} (${c.slots} slots)`]),
+      e.level, (v) => set({ level: +v }))));
+    const chips = h('div', { class: 'chips' });
+    for (const id of e.stock) {
+      const x = h('button', { type: 'button', title: 'Remove' }, '×');
+      x.addEventListener('click', () => set({ stock: e.stock.filter((s) => s !== id) }));
+      const item = ITEM_BY_ID[id];
+      const swatch = item?.icon ? h('img', { src: item.icon, alt: '' }) : h('i', { style: `background:${item?.color}` });
+      chips.append(h('span', { class: 'chip' }, swatch, item?.name ?? id, x));
+    }
+    const adder = materialSelect('chest', '', (v) => { if (v && !e.stock.includes(v)) set({ stock: [...e.stock, v] }); }, { none: '+ add item…' });
+    el.append(field('Stock', h('div', {}, chips, adder)));
+    el.append(h('p', { class: 'hint' }, 'Receives from any belt pointing in; outputs to the other belts next to it. With filters set, only filtered sides output (that item); with none, every side does:'));
+    for (const d of DIRS) {
+      const sel = materialSelect('chest', e.filters[d.name] ?? '', (v) => {
+        const filters = { ...e.filters };
+        if (v) filters[d.name] = v; else delete filters[d.name];
+        set({ filters });
+      }, { none: 'any item' });
+      el.append(field(`Out ${d.name}`, sel));
+    }
+  }
+
+  renderIssues() {
+    const list = this.$('issues');
+    const order = { error: 0, warning: 1, info: 2 };
+    const issues = [...this.issues].sort((a, b) => order[a.severity] - order[b.severity]);
+    const errors = issues.filter((i) => i.severity === 'error').length;
+    const warnings = issues.filter((i) => i.severity === 'warning').length;
+    this.$('issue-count').textContent = issues.length ? `${errors} err · ${warnings} warn` : '';
+    list.replaceChildren(...(issues.length ? issues.map((issue) => {
+      const li = h('li', { class: issue.severity }, issue.message);
+      li.addEventListener('click', () => {
+        if (issue.entityId != null) { this.setTool('select'); this.select(issue.entityId); }
+        const [x, y] = issue.cells[0] ?? [0, 0];
+        this.centerOn(x, y);
+      });
+      return li;
+    }) : [h('li', { class: 'empty' }, 'No issues')]));
+  }
+
+  renderStats() {
+    const l = this.layout;
+    /** @param {string} t */
+    const count = (t) => l.terrain.filter((c) => c === t).length;
+    /** @param {string} k */
+    const byKind = (k) => l.entities.filter((e) => e.kind === k).length;
+    /** @type {[string, string | number][]} */
+    const rows = [
+      ['Size', `${l.width} × ${l.height}`],
+      ['Floor cells', count(FLOOR)],
+      ['Free floor', count(FLOOR) - l.entities.reduce((s, e) => s + l.footprint(e).length, 0)],
+      ['Belts', byKind('belt')],
+      ['Undergrounds / splitters', `${byKind('underground')} / ${byKind('splitter')}`],
+      ...Object.entries(STATIONS).map(/** @returns {[string, number]} */ ([id, s]) => [s.name, l.entities.filter((e) => e.kind === 'station' && e.type === id).length]),
+      ['Chests', byKind('chest')],
+      ['Distributors', byKind('distributor')],
+    ];
+    this.$('stats').replaceChildren(...rows.flatMap(([k, v]) => [h('span', {}, k), h('b', {}, String(v))]));
+  }
+
+  updateStatusCell() {
+    const c = this.hover;
+    if (!c || !this.layout.inBounds(c.x, c.y)) { this.$('status-cell').textContent = ''; return; }
+    const e = this.layout.entityAt(c.x, c.y);
+    let text = `${c.x}, ${c.y} · ${terrainName(this.layout.getTerrain(c.x, c.y))}`;
+    if (e) text += ` · ${describeEntity(e)}${e.kind === 'belt' ? ` → ${DIRS[e.rot].name}` : ''}`;
+    const gap = this.layout.gapAt(c.x, c.y);
+    if (gap) text += ` · gap of ${describeEntity(gap)}`;
+    this.$('status-cell').textContent = text;
+  }
+
+  /** @param {string} msg */
+  status(msg, isError = false) {
+    const el = this.$('status-msg');
+    el.textContent = msg;
+    el.classList.toggle('error', isError);
+    clearTimeout(this._statusTimer);
+    this._statusTimer = setTimeout(() => { el.textContent = ''; }, 4000);
+  }
+}
+
+// ---- helpers ---------------------------------------------------------------
+
+/**
+ * @template {keyof HTMLElementTagNameMap} K
+ * @param {K} tag
+ * @param {Attrs} [attrs]
+ * @param {...(Node | string)} children null entries are skipped
+ * @returns {HTMLElementTagNameMap[K]}
+ */
+function h(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, /** @type {string} */ (v));
+  el.append(...children.filter((c) => c != null));
+  return el;
+}
+
+/** @param {string} label @param {Node} control */
+function field(label, control) {
+  return h('label', { class: 'field' }, h('span', {}, label), control);
+}
+
+/** @param {[string | number, string][]} options @param {string | number} value @param {(v: string) => void} onChange */
+function selectEl(options, value, onChange) {
+  const s = h('select');
+  for (const [v, text] of options) {
+    const o = h('option', { value: v }, text);
+    if (String(v) === String(value)) o.selected = true;
+    s.append(o);
+  }
+  s.addEventListener('change', () => onChange(s.value));
+  return s;
+}
+
+/** @param {string} kind @param {string} value @param {(v: string) => void} onChange @param {{ none?: string }} [options] */
+function materialSelect(kind, value, onChange, { none = '— none —' } = {}) {
+  // Distributors only supply raw materials; chests can be stocked with anything.
+  /** @type {[string, Item[]][]} */
+  const groups = kind === 'distributor'
+    ? [['Raw materials', RAW_MATERIALS]]
+    : [['Raw materials', RAW_MATERIALS], ['Chest-only ingredients', EXTERNAL_ITEMS], ['Products', PRODUCTS], ['Other items', OTHER_ITEMS]];
+  const s = h('select');
+  if (kind === 'chest' || !groups.some(([, items]) => items.some((m) => m.id === value))) s.append(h('option', { value: '' }, none));
+  for (const [label, items] of groups) {
+    const g = h('optgroup', { label });
+    for (const m of items) g.append(h('option', { value: m.id }, m.name));
+    s.append(g);
+  }
+  s.value = value ?? '';
+  s.addEventListener('change', () => onChange(s.value));
+  return s;
+}
+
+/** @type {Record<string, string>} */
+const ROT_LABEL = { belt: 'Direction', underground: 'Direction', splitter: 'Direction', distributor: 'Output', supply_station: 'Input side' };
+/** @type {Record<string, string>} */
+const TOOL_HINT = {
+  belt: 'Drag to lay a belt line — direction follows the drag. Belts cannot cross; use an underground conveyor.',
+  underground: 'Click the entry cell; it runs 5 cells in its direction. A belt may cross its middle (gap) cell.',
+  splitter: 'Takes items from behind and sends them out to both sides.',
+  station: 'Stations cannot rotate. R cycles through the four input/output layouts.',
+  chest: 'Accepts from any side, outputs to neighbouring belts not pointing in. Filters pick the sides that output.',
+  distributor: 'Raw-material source. Usually along the bottom of the factory.',
+  supply_station: 'Takes "Supply: …" crates from a belt on its input side. The planner puts these near the top-right corner.',
+};
+
+/** @param {StationType} type @param {string} current @param {number} delta */
+function cycleVariant(type, current, delta) {
+  const ids = Object.keys(stationVariants(type));
+  const n = ids.length;
+  return ids[(((ids.indexOf(current) + delta) % n) + n) % n];
+}
+
+// The select only offers STATIONS keys, so its value is a StationType.
+/** @param {StationType} value @param {(v: StationType) => void} onChange */
+function typeSelect(value, onChange) {
+  return selectEl(Object.entries(STATIONS).map(([id, s]) => [id, s.name]), value, /** @type {(v: string) => void} */ (onChange));
+}
+
+/** @param {StationType} type @param {number} value @param {(v: number) => void} onChange */
+function levelSelect(type, value, onChange) {
+  return selectEl(STATIONS[type].levels.map((l) => [l, ROMAN[l]]), value, (v) => onChange(+v));
+}
+
+/** @param {StationType} type @param {string} value @param {(v: string) => void} onChange */
+function variantSelect(type, value, onChange) {
+  return selectEl(Object.entries(stationVariants(type)).map(([id, v]) => [id, v.name]), value, onChange);
+}
+
+// Changing station type or level: keep the level and layout valid for the type
+// and drop a recipe the new type/level can't run.
+/** @param {StationOpts} opts @param {StationChange} change @returns {StationOpts} */
+function stationPatch(opts, change) {
+  const type = change.type ?? opts.stationType;
+  const levels = STATIONS[type].levels;
+  const level = levels.includes(change.level ?? opts.level) ? (change.level ?? opts.level) : levels.at(-1);
+  const variant = stationVariants(type)[opts.variant] ? opts.variant : defaultVariant(type);
+  const extensions = (opts.extensions ?? []).filter((id) => EXTENSIONS[id].station === type);
+  return { stationType: type, level, variant, extensions, recipe: validRecipe(type, level, opts.recipe) };
+}
+
+/** @param {Entity} e @param {StationChange} change @returns {Partial<Entity>} */
+function stationEntityPatch(e, change) {
+  const p = stationPatch({ stationType: e.type, level: e.level, variant: e.variant, extensions: e.extensions, recipe: e.recipe }, change);
+  return { type: p.stationType, level: p.level, variant: p.variant, extensions: p.extensions, recipe: p.recipe || null };
+}
+
+// Toggle an extension: it replaces whatever sits in its slot, or comes off again.
+/** @param {string[]} list @param {string} id */
+function toggleExtension(list, id) {
+  if (list.includes(id)) return list.filter((x) => x !== id);
+  return [...list.filter((x) => EXTENSIONS[x].slot !== EXTENSIONS[id].slot), id];
+}
+
+// Extensions after picking a recipe: the one it needs is fitted.
+/** @param {string[]} list @param {string} recipeId */
+function withRequired(list, recipeId) {
+  const need = RECIPE_BY_ID[recipeId]?.extension;
+  return need && !list.includes(need) ? toggleExtension(list, need) : list;
+}
+
+// One row of icon toggles per slot. The recipe's extension is marked, in red
+// while it's missing.
+/** @param {StationType} type @param {string[]} list @param {string} recipeId @param {(list: string[]) => void} onChange */
+function extensionButtons(type, list, recipeId, onChange) {
+  const need = RECIPE_BY_ID[recipeId]?.extension;
+  const wrap = h('div', { class: 'ext-slots' });
+  for (const slot of EXTENSION_SLOTS) {
+    const row = h('div', { class: 'ext-row' }, h('span', { class: 'ext-slot' }, slot));
+    for (const id of extensionsFor(type).filter((x) => EXTENSIONS[x].slot === slot)) {
+      const x = EXTENSIONS[id];
+      const cls = [list.includes(id) && 'active', id === need && (list.includes(id) ? 'needed' : 'missing')].filter(Boolean).join(' ');
+      const b = h('button', { type: 'button', class: cls, title: `${x.name}${id === need ? ' (needed by the recipe)' : ''}` },
+        h('img', { src: x.icon, alt: x.name }));
+      b.addEventListener('click', () => onChange(toggleExtension(list, id)));
+      row.append(b);
+    }
+    wrap.append(row);
+  }
+  return wrap;
+}
+
+/** @param {StationType} type @param {number} level @param {string} value @param {(v: string) => void} onChange */
+function recipeSelect(type, level, value, onChange) {
+  /** @param {string} id */
+  const name = (id) => ITEM_BY_ID[id]?.name ?? id;
+  /** @type {[string, string][]} */
+  const opts = [['', '— none —'], ...recipesFor(type, level).map(/** @returns {[string, string]} */ (r) =>
+    [r.id, `${Object.keys(r.outputs).map(name).join(', ')} ← ${Object.keys(r.inputs).map(name).join(' + ')}`])];
+  return selectEl(opts, value, onChange);
+}
+
+/** @param {StationType} type @param {number} level @param {string} recipe */
+function validRecipe(type, level, recipe) {
+  return recipesFor(type, level).some((r) => r.id === recipe) ? recipe : '';
+}
+
+// Recipe line plus the worker talent it needs, with the game's talent icon.
+/** @param {StationType} type @param {Recipe} r */
+function recipeInfo(type, r) {
+  const t = TALENTS[STATIONS[type].talent];
+  return h('div', { class: 'recipe' }, recipeText(r), ' · needs ',
+    h('span', { class: 'talent', title: `${t.name} talent level ${r.talent}` }, `${r.talent}`, h('img', { src: t.icon, alt: t.name })));
+}
+
+/** @param {Recipe} r */
+function recipeText(r) {
+  /** @param {Record<string, number>} o */
+  const side = (o) => Object.entries(o).map(([id, n]) => `${n} ${ITEM_BY_ID[id]?.name ?? id}`).join(' + ');
+  const needs = [r.tech && `tech: ${r.tech}`, r.extension && `extension: ${EXTENSIONS[r.extension].name}`].filter(Boolean).join(', ');
+  return `${side(r.inputs)} → ${side(r.outputs)}${r.time ? ` (${r.time}s)` : ''}${needs ? ` · ${needs}` : ''}`;
+}
+
+/** @param {number} current @param {(rot: Dir) => void} onPick */
+function rotButtons(current, onPick) {
+  const wrap = h('div', { class: 'rot-buttons' });
+  for (const d of DIRS) {
+    const b = h('button', { type: 'button', class: d.id === current ? 'active' : '' }, d.name);
+    b.addEventListener('click', () => onPick(d.id));
+    wrap.append(b);
+  }
+  return wrap;
+}
+
+// 4-connected cell path from a (exclusive) to b (inclusive).
+/** @param {XY} a @param {XY} b */
+function path4(a, b) {
+  /** @type {XY[]} */
+  const out = [];
+  const dx = b.x - a.x, dy = b.y - a.y;
+  let x = a.x, y = a.y;
+  for (let i = 0, n = Math.abs(dx) + Math.abs(dy); i < n; i++) {
+    const px = dx ? Math.abs(x - a.x) / Math.abs(dx) : 1;
+    const py = dy ? Math.abs(y - a.y) / Math.abs(dy) : 1;
+    if (x !== b.x && px <= py) x += Math.sign(dx); else y += Math.sign(dy);
+    out.push({ x, y });
+  }
+  return out;
+}
+
+/** @param {XY} a @param {XY} b @returns {Dir} */
+function dirBetween(a, b) {
+  return DIRS.find((d) => d.dx === b.x - a.x && d.dy === b.y - a.y).id;
+}
+
+// Pretty JSON with terrain rows and entities one per line (easy to diff/edit by hand).
+/** @param {import('./model.js').LayoutJSON} data */
+export function formatLayoutJSON(data) {
+  const { entities, ...rest } = data;
+  const head = JSON.stringify(rest, null, 2).replace(/\n}$/, '');
+  const body = entities.length ? `[\n${entities.map((e) => `    ${JSON.stringify(e)}`).join(',\n')}\n  ]` : '[]';
+  return `${head},\n  "entities": ${body}\n}\n`;
+}
+
+/** @param {string} s */
+function slug(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'factory';
+}
+
+/** @param {number} v @param {number} lo @param {number} hi */
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+/** @param {number} v */
+function mod4(v) { return ((v % 4) + 4) % 4; }
