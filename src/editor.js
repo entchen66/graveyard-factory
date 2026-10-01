@@ -3,11 +3,11 @@
 
 import {
   DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
-  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, CAROUSEL_SIZE, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
+  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, ZOMBIE_POWER, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
 } from './catalog.js';
 import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
 import { drawLayout, loadArt } from './render.js';
-import { factoryFloor, syncDistributors } from './floor.js';
+import { factoryFloor } from './floor.js';
 import { Background } from './background.js';
 import { PlannerPanel } from './planner/panel.js';
 
@@ -26,7 +26,6 @@ import { PlannerPanel } from './planner/panel.js';
 /**
  * Placement options for the current tool.
  * @typedef {object} ToolOpts
- * @property {string} material
  * @property {StationType} stationType
  * @property {number} level
  * @property {string} variant
@@ -63,9 +62,7 @@ const ENTITY_TOOLS = [
   { id: 'splitter', name: 'Splitter', key: 'p' },
   { id: 'station', name: 'Station', key: 's' },
   { id: 'chest', name: 'Chest', key: 'h' },
-  { id: 'distributor', name: 'Distributor', key: 'd' },
   { id: 'supply_station', name: 'Supply station', key: 'l' },
-  { id: 'carousel', name: 'Zombie carousel', key: 'z' },
 ];
 const TOOL_BY_KEY = Object.fromEntries([...TERRAIN_TOOLS, ...ENTITY_TOOLS].map((t) => [t.key, t.id]));
 
@@ -82,9 +79,9 @@ export class Editor {
     this.tool = 'select';
     // Rotation is remembered per placement tool.
     /** @type {Record<string, number>} */
-    this.rots = { belt: 1, underground: 1, splitter: 0, distributor: 0, supply_station: 2 };
+    this.rots = { belt: 1, underground: 1, splitter: 0, supply_station: 2 };
     /** @type {ToolOpts} */
-    this.opts = { material: RAW_MATERIALS[0].id, stationType: 'assembly_bench', level: 1, variant: defaultVariant('assembly_bench'), recipe: '', extensions: [], chestItem: '' };
+    this.opts = { stationType: 'assembly_bench', level: 1, variant: defaultVariant('assembly_bench'), recipe: '', extensions: [], chestItem: '' };
     /** @type {number} */
     this.selectedId = null;
     /** @type {XY} */
@@ -279,19 +276,14 @@ export class Editor {
   // Entity the current tool would place at the hovered cell.
   /** @param {XY} cell @returns {EntitySpec} */
   toolEntity(cell) {
-    const { material, stationType, level, variant, recipe, extensions } = this.opts;
+    const { stationType, level, variant, recipe, extensions } = this.opts;
     const rot = this.rots[this.tool];
     switch (this.tool) {
       case 'belt': return { kind: 'belt', x: cell.x, y: cell.y, rot };
       case 'underground': return { kind: 'underground', x: cell.x, y: cell.y, rot };
       case 'splitter': return { kind: 'splitter', x: cell.x, y: cell.y, rot };
       case 'chest': return { kind: 'chest', x: cell.x, y: cell.y, stock: this.opts.chestItem ? [this.opts.chestItem] : [], filters: {} };
-      case 'distributor': return { kind: 'distributor', x: cell.x, y: cell.y, rot, material };
       case 'supply_station': return { kind: 'supply_station', x: cell.x, y: cell.y, rot };
-      case 'carousel': {
-        const off = Math.floor(CAROUSEL_SIZE / 2);
-        return { kind: 'carousel', x: cell.x - off, y: cell.y - off };
-      }
       case 'station': {
         const off = Math.floor(STATIONS[stationType].size / 2);
         return { kind: 'station', type: stationType, level, variant, recipe: recipe || null, extensions: [...extensions], x: cell.x - off, y: cell.y - off, rot };
@@ -314,7 +306,9 @@ export class Editor {
   /** @param {number} delta */
   rotate(delta) {
     const sel = this.tool === 'select' && this.layout.getEntity(this.selectedId);
-    if (sel?.kind === 'station') {
+    if (sel && ENTITY_KINDS[sel.kind].fixed) {
+      this.status(`${describeEntity(sel)} is part of the factory: it can't be changed`, true);
+    } else if (sel?.kind === 'station') {
       this.mutate(() => this.layout.update(sel.id, { variant: cycleVariant(sel.type, sel.variant, delta) }));
     } else if (sel && ENTITY_KINDS[sel.kind].rotatable) {
       const rotated = { ...sel, rot: mod4(sel.rot + delta) };
@@ -334,6 +328,8 @@ export class Editor {
 
   deleteSelected() {
     if (this.selectedId == null) return;
+    const sel = this.layout.getEntity(this.selectedId);
+    if (sel && ENTITY_KINDS[sel.kind].fixed) { this.status(`${describeEntity(sel)} is part of the factory: it can't be removed`, true); return; }
     this.mutate(() => this.layout.remove(this.selectedId));
     this.selectedId = null;
     this.changed();
@@ -404,7 +400,9 @@ export class Editor {
       }
     } else if (this.tool === 'select') {
       const e = this.layout.entityAt(cell.x, cell.y) ?? this.layout.gapAt(cell.x, cell.y);
-      if (e) {
+      if (e && ENTITY_KINDS[e.kind].fixed) {
+        this.select(e.id);
+      } else if (e) {
         this.select(e.id);
         this.drag = { mode: 'move', before, id: e.id, gx: cell.x - e.x, gy: cell.y - e.y, ghost: null };
       } else {
@@ -500,7 +498,7 @@ export class Editor {
   /** @param {XY} cell */
   eraseAt(cell) {
     const e = this.layout.entityAt(cell.x, cell.y);
-    if (e) this.layout.remove(e.id);
+    if (e && !ENTITY_KINDS[e.kind].fixed) this.layout.remove(e.id);
   }
 
   updateCursor() {
@@ -580,13 +578,13 @@ export class Editor {
     });
   }
 
-  // Remove everything placed on the floor; the floor and its distributors stay.
+  // Remove everything placed on the floor; the floor and its fixed distributors stay.
   clear() {
     if (this.preview) this.planner.discard();
     this.selectedId = null;
-    const n = this.layout.entities.filter((e) => e.kind !== 'distributor').length;
+    const n = this.layout.entities.filter((e) => !ENTITY_KINDS[e.kind].fixed).length;
     this.mutate(() => {
-      for (const e of this.layout.entities.filter((x) => x.kind !== 'distributor')) this.layout.remove(e.id);
+      for (const e of this.layout.entities.filter((x) => !ENTITY_KINDS[x.kind].fixed)) this.layout.remove(e.id);
     });
     this.status(n ? `Cleared ${n} pieces (Undo to go back)` : 'Nothing to clear');
   }
@@ -597,7 +595,7 @@ export class Editor {
   /** @param {number} id @param {boolean} on */
   setSectionRepaired(id, on) {
     const repaired = this.layout.repaired ?? [];
-    const pieces = this.layout.entities.filter((e) => e.kind !== 'distributor');
+    const pieces = this.layout.entities.filter((e) => !ENTITY_KINDS[e.kind].fixed);
     const name = `section ${id} (${FLOOR_SECTIONS.find((s) => s.id === id).name.toLowerCase()})`;
     if (!on && pieces.length && !confirm(`Turning off ${name} clears the current setup (${pieces.length} pieces). Continue?`)) {
       this.renderSections();
@@ -606,10 +604,9 @@ export class Editor {
     if (this.preview) this.planner.discard();
     this.selectedId = null;
     this.mutate(() => {
-      const before = [...this.layout.terrain];
       if (!on) for (const e of pieces) this.layout.remove(e.id);
+      // Distributors come and go with the floor they feed.
       this.layout.setRepaired(on ? [...repaired, id] : repaired.filter((x) => x !== id));
-      syncDistributors(this.layout, before);
     });
     this.status(on ? `Repaired ${name}` : `Turned off ${name}${pieces.length ? `; cleared ${pieces.length} pieces (Undo to go back)` : ''}`);
   }
@@ -683,9 +680,6 @@ export class Editor {
       el.append(field('Extensions', extensionButtons(this.opts.stationType, this.opts.extensions, this.opts.recipe,
         (list) => setOpt({ extensions: list }))));
     }
-    if (ENTITY_KINDS[/** @type {EntityKind} */ (t)].hasMaterial) {
-      el.append(field('Material', materialSelect(t, this.opts.material, (v) => setOpt({ material: v }))));
-    }
     if (t === 'chest') {
       el.append(field('Stock', materialSelect(t, this.opts.chestItem, (v) => setOpt({ chestItem: v }), { none: '— empty —' })));
     }
@@ -710,6 +704,11 @@ export class Editor {
     el.append(h('h2', {}, `Selected: ${e.kind === 'station' ? STATIONS[e.type].name : ENTITY_KINDS[e.kind].name}`));
     const b = entityBounds(e);
     el.append(field('Position', h('span', {}, `${e.x}, ${e.y}${b.w * b.h > 1 ? ` (${b.w}×${b.h})` : ''}`)));
+    if (ENTITY_KINDS[e.kind].fixed) {
+      if (e.material) el.append(field('Material', h('span', {}, ITEM_BY_ID[e.material]?.name ?? e.material)));
+      el.append(h('p', { class: 'hint' }, 'Part of the factory: it can\'t be moved, turned or removed. The cell it feeds can stay empty or take a belt or an underground\'s entry, not pointing back into it.'));
+      return;
+    }
     if (e.kind === 'station') {
       el.append(
         field('Type', typeSelect(e.type, (v) => set(stationEntityPatch(e, { type: v })))),
@@ -720,9 +719,6 @@ export class Editor {
       );
       if (RECIPE_BY_ID[e.recipe]) el.append(recipeInfo(e.type, RECIPE_BY_ID[e.recipe]));
       el.append(field('Extensions', extensionButtons(e.type, e.extensions, e.recipe, (list) => set({ extensions: list }))));
-    }
-    if (ENTITY_KINDS[e.kind].hasMaterial) {
-      el.append(field('Material', materialSelect(e.kind, e.material, (v) => set({ material: v }))));
     }
     if (e.kind === 'chest') this.renderChestFields(el, e, set);
     if (ENTITY_KINDS[e.kind].rotatable) {
@@ -802,12 +798,10 @@ export class Editor {
     beltMaster.checked = l.beltMaster;
     beltMaster.addEventListener('change', () => this.mutate(() => { this.layout.beltMaster = beltMaster.checked; }));
     this.$('stats').replaceChildren(
-      h('span', { class: 'power', title: 'Factory power: 1 per station, belt and chest' }, h('img', { src: POWER_ICON, alt: '' }), 'Power'),
-      h('b', { class: p.missingCarousels ? 'over' : '' }, `${p.used} / ${p.available}`),
-      h('span', { title: `${p.perZombie} power per zombie, 4 zombies per carousel` }, 'Zombies needed'),
-      h('b', {}, String(p.zombies)),
-      h('span', { title: 'Carousels needed / the 4 built in plus any placed on the floor' }, 'Carousels'),
-      h('b', { class: p.missingCarousels ? 'over' : '' }, `${p.carouselsNeeded} / ${p.carousels}`),
+      h('span', { class: 'power', title: 'Factory power: 1 per station, belt and chest, 2 per underground conveyor' }, h('img', { src: POWER_ICON, alt: '' }), 'Power'),
+      h('b', { class: p.over ? 'over' : '' }, `${p.used} / ${p.available}`),
+      h('span', { title: `${p.perZombie} power per zombie; the factory's ${p.carousels} carousels hold ${ZOMBIE_POWER.zombiesPerCarousel} zombies each` }, 'Zombies needed'),
+      h('b', { class: p.over ? 'over' : '' }, `${p.zombies} / ${p.maxZombies}`),
       h('label', { class: 'perk', title: 'Belt Master perk: 10 power per zombie instead of 7' }, beltMaster, h('img', { src: BELT_MASTER_ICON, alt: '' }), 'Belt Master'),
       h('span', {}),
       ...rows.flatMap(([k, v]) => [h('span', {}, k), h('b', {}, String(v))]),
@@ -870,11 +864,8 @@ function selectEl(options, value, onChange) {
 
 /** @param {string} kind @param {string} value @param {(v: string) => void} onChange @param {{ none?: string }} [options] */
 function materialSelect(kind, value, onChange, { none = '— none —' } = {}) {
-  // Distributors only supply raw materials; chests can be stocked with anything.
   /** @type {[string, Item[]][]} */
-  const groups = kind === 'distributor'
-    ? [['Raw materials', RAW_MATERIALS]]
-    : [['Raw materials', RAW_MATERIALS], ['Chest-only ingredients', EXTERNAL_ITEMS], ['Products', PRODUCTS], ['Other items', OTHER_ITEMS]];
+  const groups = [['Raw materials', RAW_MATERIALS], ['Chest-only ingredients', EXTERNAL_ITEMS], ['Products', PRODUCTS], ['Other items', OTHER_ITEMS]];
   const s = h('select');
   if (kind === 'chest' || !groups.some(([, items]) => items.some((m) => m.id === value))) s.append(h('option', { value: '' }, none));
   for (const [label, items] of groups) {
@@ -888,7 +879,7 @@ function materialSelect(kind, value, onChange, { none = '— none —' } = {}) {
 }
 
 /** @type {Record<string, string>} */
-const ROT_LABEL = { belt: 'Direction', underground: 'Direction', splitter: 'Direction', distributor: 'Output', supply_station: 'Input side' };
+const ROT_LABEL = { belt: 'Direction', underground: 'Direction', splitter: 'Direction', supply_station: 'Input side' };
 /** @type {Record<string, string>} */
 const TOOL_HINT = {
   belt: 'Drag to lay a belt line — direction follows the drag. Belts cannot cross; use an underground conveyor.',
@@ -896,8 +887,6 @@ const TOOL_HINT = {
   splitter: 'Takes items from behind and sends them out to both sides.',
   station: 'Stations cannot rotate. R cycles through the four input/output layouts.',
   chest: 'Accepts from any side, outputs to neighbouring belts not pointing in. Filters pick the sides that output.',
-  distributor: 'Raw-material source. Usually along the bottom of the factory.',
-  carousel: 'Zombie carousel (3×3): holds 4 zombies that power the factory. The factory has 4 built in.',
   supply_station: 'Takes "Supply: …" crates from a belt on its input side. The planner puts these near the top-right corner.',
 };
 

@@ -29,7 +29,7 @@
 
 import {
   N, DIRS, STATIONS, ITEMS, ITEM_BY_ID, ROMAN, RECIPE_BY_ID, TALENTS, UNIT_PX, EXTENSION_ART_FRAME, extensionArt, entityBounds, entityCells,
-  ART_DIRS, CONVEYOR_ART, CHEST_LEVELS, CHEST_ART_OFFSET, CAROUSEL_ART, CAROUSEL_SIZE, FLOOR_SECTIONS,
+  ART_DIRS, CONVEYOR_ART, CHEST_LEVELS, CHEST_ART_OFFSET, FLOOR_SECTIONS,
 } from './catalog.js';
 
 /** @type {Record<string, HTMLImageElement>} */
@@ -336,21 +336,6 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
     ctx.fillStyle = COLORS.chestLid;
     ctx.fillRect(px + m, py + m, cell - 2 * m, (cell - 2 * m) * 0.35);
     drawChestContents(ctx, e, px, py, cell);
-  } else if (e.kind === 'carousel') {
-    const img = load(SPRITES, CAROUSEL_ART.src, CAROUSEL_ART.src);
-    if (ready(img)) {
-      const sx = cell / UNIT_PX.w, sy = cell / UNIT_PX.h;
-      ctx.save();
-      ctx.globalAlpha = prevAlpha;
-      ctx.imageSmoothingEnabled = sx < 1;
-      ctx.drawImage(img, px + CAROUSEL_ART.dx * sx, py + CAROUSEL_ART.dy * sy, img.naturalWidth * sx, img.naturalHeight * sy);
-      ctx.restore();
-    } else {
-      ctx.fillStyle = '#6b4a2b';
-      ctx.beginPath();
-      ctx.arc(px + CAROUSEL_SIZE * cell / 2, py + CAROUSEL_SIZE * cell / 2, CAROUSEL_SIZE * cell * 0.45, 0, Math.PI * 2);
-      ctx.fill();
-    }
   } else if (e.kind === 'supply_station') {
     ctx.fillStyle = '#6b4a2b';
     ctx.fillRect(px + cell * 0.1, py + cell * 0.1, cell * 0.8, cell * 0.8);

@@ -19,7 +19,7 @@
 /** @typedef {import('./types.js').Bounds} Bounds */
 /** @typedef {import('./types.js').FloorSection} FloorSection */
 /** @typedef {[number, number]} Offset */
-/** @typedef {{ name: string, rotatable?: boolean, hasMaterial?: boolean }} EntityKindDef */
+/** fixed: part of the floor plan (in the wall, off the floor), never placed, moved or removed by hand. @typedef {{ name: string, rotatable?: boolean, hasMaterial?: boolean, fixed?: boolean }} EntityKindDef */
 /** @typedef {{ name: string, icon: string }} TalentDef */
 /** @typedef {{ name: string, slots: number, art: string }} ChestLevel */
 
@@ -412,9 +412,8 @@ export const ENTITY_KINDS = {
   underground: { name: 'Underground conveyor', rotatable: true },
   splitter: { name: 'Conveyor splitter', rotatable: true },
   chest: { name: 'Chest' },
-  distributor: { name: 'Distribution station', rotatable: true, hasMaterial: true },
+  distributor: { name: 'Distribution station', rotatable: true, hasMaterial: true, fixed: true },
   supply_station: { name: 'Supply station', rotatable: true },
-  carousel: { name: 'Zombie carousel' },
   station: { name: 'Station' },
 };
 
@@ -469,19 +468,18 @@ export const CHEST_ART_OFFSET = [-4, -32];
 /** @type {(id: string) => boolean} */
 export const isSupplyItem = (id) => id.startsWith('supply_');
 
-// Factory power (the gear in the game's UI) each placed piece uses. Kinds not
-// listed cost nothing. The icon is the game's power gear, tinted yellow.
+// Factory power (the gear in the game's UI) each placed piece uses: 2 for an
+// underground conveyor (confirmed by the user). Kinds not listed cost nothing.
+// The icon is the game's power gear, tinted yellow.
 /** @type {Partial<Record<import('./types.js').EntityKind, number>>} */
-export const POWER_COST = { station: 1, belt: 1, chest: 1 };
+export const POWER_COST = { station: 1, belt: 1, chest: 1, underground: 2 };
 export const POWER_ICON = 'assets/ui/power.webp';
 
-// Power comes from zombies on zombie carousels (3x3, no ports: the prefab's
-// build collider). The factory starts with 4 carousels outside the floor plan;
-// more can be built on it. The Belt Master perk raises each zombie's power.
-export const ZOMBIE_POWER = { perZombie: 7, perZombieBeltMaster: 10, zombiesPerCarousel: 4, builtInCarousels: 4 };
-export const CAROUSEL_SIZE = 3;
-/** Art relative to the 3x3 footprint's top-left, game px (from the prefab). */
-export const CAROUSEL_ART = { src: 'assets/stations/carousel.webp', dx: 10, dy: -46 };
+// Power comes from zombies on the factory's zombie carousels. They're fixed
+// (outside the floor plan, none can be built), 5 of them with 4 zombies each, so
+// at most 20 zombies: 140 power, or 200 with the Belt Master perk (confirmed by
+// the user).
+export const ZOMBIE_POWER = { perZombie: 7, perZombieBeltMaster: 10, zombiesPerCarousel: 4, carousels: 5 };
 export const BELT_MASTER_ICON = 'assets/ui/perk_beltmaster.webp';
 
 // The factory floor is the game's `conveyor` world zone, made of ten build areas
@@ -516,10 +514,33 @@ export const FLOOR_SECTIONS = [
 // The fixed floor plan's grid; every section fits in it.
 export const FLOOR_GRID = { width: 42, height: 55 };
 
+// The factory's distribution stations: in the bottom wall, one row below the
+// floor (the `conveyor_place_module_cells_1` slots), each feeding north into
+// the floor's bottom row (confirmed by the user). They can't be built or moved.
+/** @type {{ x: number, y: number, material: string }[]} */
+export const FACTORY_DISTRIBUTORS = [
+  { x: 3, y: 53, material: 'marble' },
+  { x: 7, y: 53, material: 'iron_ore' },
+  { x: 11, y: 53, material: 'coal' },
+  { x: 15, y: 53, material: 'clay' },
+  { x: 19, y: 53, material: 'sand' },
+  { x: 23, y: 53, material: 'stone' },
+  { x: 27, y: 53, material: 'wood_log' },
+];
+// The cell a distributor feeds may stay empty, or hold a belt or the entry of
+// an underground conveyor, neither pointing back into the distributor; nothing
+// else (confirmed by the user).
+/** @type {import('./types.js').EntityKind[]} */
+export const DISTRIBUTOR_FRONT_KINDS = ['belt', 'underground'];
+
 // Belts can be fed from their sides (merging), confirmed in-game.
 export const BELT_ACCEPTS_FROM_SIDES = true;
 // Must the underground conveyor's gap cell be factory floor?
 export const UNDERGROUND_GAP_MUST_BE_FLOOR = true;
+// What may sit on an underground conveyor's gap cell (it runs below): a belt
+// crossing it, or a chest (confirmed by the user).
+/** @type {import('./types.js').EntityKind[]} */
+export const UNDERGROUND_GAP_KINDS = ['belt', 'chest'];
 export const UNDERGROUND_LENGTH = 5;
 export const UNDERGROUND_GAP = 2; // index of the gap cell along the conveyor
 
@@ -529,8 +550,8 @@ export const UNDERGROUND_GAP = 2; // index of the gap cell along the conveyor
  * @returns {Cell[]}
  */
 export function entityCells(e) {
-  if (e.kind === 'station' || e.kind === 'carousel') {
-    const s = e.kind === 'carousel' ? CAROUSEL_SIZE : STATIONS[e.type].size;
+  if (e.kind === 'station') {
+    const s = STATIONS[e.type].size;
     const cells = [];
     for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) cells.push({ x: e.x + dx, y: e.y + dy, gap: false });
     return cells;

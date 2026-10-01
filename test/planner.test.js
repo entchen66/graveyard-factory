@@ -13,6 +13,9 @@ const byRecipe = (plan) => Object.fromEntries(plan.recipes.map((r) => [r.recipe,
 // their numbers don't move with the game's craft times.
 const ONE_PER_MINUTE = { craftsPerMinute: Object.fromEntries(RECIPES.map((r) => [r.id, 1])) };
 const plan1 = (targets, options = {}) => planProduction(targets, { ...ONE_PER_MINUTE, ...options });
+// A planned layout's errors and warnings, except power over the maximum: that's
+// the plan's size, not a rule the router broke (the stats report it).
+const layoutIssues = (l) => l.validate().filter((i) => i.severity !== 'info' && !/over the factory/.test(i.message)).map((i) => i.message);
 
 test('production: Supply: Iron needs 8 smithies and one bench', () => {
   const plan = plan1([{ item: 'supply_iron', rate: 1 }]);
@@ -120,7 +123,8 @@ test('router: chests feed neighbouring belts on the sides they output from', () 
 function smallFactory() {
   const l = Layout.blank(20, 14);
   for (let x = 0; x < 20; x++) l.setTerrain(x, 13, VOID);
-  ['stone', 'clay', 'coal', 'iron_ore'].forEach((m, i) => l.add({ kind: 'distributor', x: 2 + i * 4, y: 12, rot: N, material: m }));
+  // Distributors sit in the wall below the floor, as in the factory.
+  ['stone', 'clay', 'coal', 'iron_ore'].forEach((m, i) => l.add({ kind: 'distributor', x: 2 + i * 4, y: 13, rot: N, material: m }));
   return l;
 }
 
@@ -145,7 +149,7 @@ function runPlan(layout, targets, iterations, seed = 1) {
 test('planner: builds a valid layout for a small plan', () => {
   const { res, out } = runPlan(smallFactory(), [{ item: 'building_kit_1', rate: 1 }], 300);
   assert.deepEqual(res.failures, []);
-  assert.deepEqual(out.validate().filter((i) => i.severity !== 'info').map((i) => i.message), []);
+  assert.deepEqual(layoutIssues(out), []);
   assert.equal(res.stats.stations, 3); // stone kit + brick + building kit
   assert.ok(res.entities.every((e) => e.planned && !e.locked));
   // The output lands in a chest, and each station records its port assignment.
@@ -164,10 +168,10 @@ test('planner: Supply: Iron on the real factory floor routes everything', () => 
   const runs = [1, 2].map((seed) => runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 1500, seed));
   const { res, out } = runs.find((r) => !r.res.failures.length) ?? runs[0];
   assert.deepEqual(res.failures, []);
-  assert.deepEqual(out.validate().filter((i) => i.severity !== 'info').map((i) => i.message), []);
+  assert.deepEqual(layoutIssues(out), []);
   assert.equal(res.stats.stations, 9);
-  // Over the built-in 112 power, so the plan brings its own carousels.
-  assert.ok(res.stats.power > 112 && res.stats.carousels > 0 && res.stats.carouselsNotPlaced === 0, JSON.stringify(res.stats));
+  // At 1 craft per minute per recipe this needs more power than the factory has.
+  assert.ok(res.stats.power > 140 && res.stats.over === res.stats.power - 140 && res.stats.available === 140, JSON.stringify(res.stats));
 });
 
 test('planner: plans on the fully repaired floor validate', () => {
@@ -175,7 +179,7 @@ test('planner: plans on the fully repaired floor validate', () => {
   const runs = [1, 2].map((seed) => runPlan(layout, [{ item: 'building_kit_1', rate: 1 }], 600, seed));
   const { res, out } = runs.find((r) => !r.res.failures.length) ?? runs[0];
   assert.deepEqual(res.failures, []);
-  assert.deepEqual(out.validate().filter((i) => i.severity !== 'info').map((i) => i.message), []);
+  assert.deepEqual(layoutIssues(out), []);
 });
 
 test('planner: stationInstances splits fractional crafts over stations', () => {
@@ -190,7 +194,7 @@ test('planner: places a 2x2 kitchen and routes it', () => {
   l.entities.find((e) => e.material === 'stone').material = 'sand';
   const { res, out } = runPlan(l, [{ item: 'supply_preserves_1', rate: 1 }], 300);
   assert.deepEqual(res.failures, []);
-  assert.deepEqual(out.validate().filter((i) => i.severity !== 'info').map((i) => i.message), []);
+  assert.deepEqual(layoutIssues(out), []);
   assert.ok(res.entities.some((e) => e.kind === 'station' && e.type === 'kitchen'));
 });
 
@@ -202,7 +206,7 @@ test('planner: a "Supply: ..." output ends in a supply station near the top-righ
   assert.ok(!res.entities.some((e) => e.kind === 'chest' && e.role === 'output'), 'no output chest');
   const corner = new Planner(layout, plan1([{ item: 'supply_iron', rate: 1 }]), {}).corner;
   assert.ok(Math.abs(corner.x - ss[0].x) + Math.abs(corner.y - ss[0].y) <= 6, `supply station at ${ss[0].x},${ss[0].y}`);
-  assert.deepEqual(out.validate().filter((i) => i.severity !== 'info').map((i) => i.message), []);
+  assert.deepEqual(layoutIssues(out), []);
 });
 
 test('model: a supply station takes items on its input side only', () => {

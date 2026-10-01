@@ -2,7 +2,7 @@
 // Planner side panel: targets, options, production summary, and running the
 // layout search with a live preview on the canvas.
 
-import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON } from '../catalog.js';
+import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON, ZOMBIE_POWER } from '../catalog.js';
 import { planProduction, recipesProducing } from './production.js';
 
 /** @typedef {import('../types.js').Item} Item */
@@ -247,10 +247,9 @@ export class PlannerPanel {
       el.append(...lines.map((t, i) => h('p', { class: i === 2 && r?.failures.length ? 'error' : 'hint' }, t)));
       if (r) {
         const st = r.stats;
-        const extra = st.carousels ? ` · adds ${st.carousels} carousel(s)` : '';
-        const noRoom = st.carouselsNotPlaced > 0 ? ` · no room for ${st.carouselsNotPlaced} more` : '';
-        el.append(h('p', { class: noRoom ? 'error power' : 'hint power', title: 'Factory power: 1 per station, belt and chest; zombies from the Belt Master setting in Stats' },
-          h('img', { src: POWER_ICON, alt: '' }), `Power: ${st.power} · ${st.zombies} zombies${extra}${noRoom}`));
+        const over = st.over ? ` · ${st.over} over the maximum` : '';
+        el.append(h('p', { class: over ? 'error power' : 'hint power', title: `Factory power: 1 per station, belt and chest, 2 per underground conveyor; the maximum comes from the factory's ${ZOMBIE_POWER.carousels} carousels and the Belt Master setting in Stats` },
+          h('img', { src: POWER_ICON, alt: '' }), `Power: ${st.power} / ${st.available} · ${st.zombies} zombies${over}`));
       }
       if (r?.failures.length) {
         el.append(h('ul', { class: 'failures' }, ...r.failures.slice(0, 8).map((f) => h('li', {}, describeFailure(f)))));

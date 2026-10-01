@@ -99,7 +99,7 @@ export const COST = {
   chest: 3,
 };
 
-const FREE = 0, BLOCKED = 1, BELT = 2;
+const FREE = 0, BLOCKED = 1, BELT = 2, CHEST = 3;
 
 export class RouteGrid {
   /**
@@ -111,10 +111,13 @@ export class RouteGrid {
     this.W = width;
     this.H = height;
     this.floor = new Uint8Array(n);
-    this.occ = new Uint8Array(n);       // FREE / BLOCKED / BELT
+    this.occ = new Uint8Array(n);       // FREE / BLOCKED / BELT / CHEST
     this.rot = new Int8Array(n).fill(-1);
     this.gap = new Int8Array(n).fill(-1);      // rot of the underground whose gap is here
     this.reserved = new Int32Array(n).fill(-1); // port access cell, owner token
+    // In front of a distributor: the direction back into it. Only a belt or an
+    // underground's entry may go there, not pointing back (DISTRIBUTOR_FRONT_KINDS).
+    this.distFront = new Int8Array(n).fill(-1);
     // Bit r set: a belt here with rotation r would be fed by an adjacent chest.
     // A chest pushes into every neighbouring belt not pointing into it, on the
     // sides it outputs from: its filtered sides, or every side with no filters.
@@ -164,7 +167,7 @@ export class RouteGrid {
   // they feed, so they output nowhere else (sides = 0); output chests have none.
   /** @param {number} k @param {number} [sides] */
   addChestAt(k, sides = 0b1111) {
-    this.occ[k] = BLOCKED;
+    this.occ[k] = CHEST;
     for (let d = 0; d < 4; d++) {
       const j = this.step(k, d);
       if (j >= 0 && sides & (1 << d)) this.chestFeeds[j] |= 0b1111 & ~(1 << rev(d));
@@ -192,12 +195,13 @@ export class RouteGrid {
     if (this.reserved[k] !== -1 && !allow.has(k)) return false;
     if (this.chestFeeds[k] & (1 << r) && !((exempt?.get(k) ?? 0) & (1 << r))) return false;
     if (this.gap[k] !== -1 && (this.gap[k] & 1) === (r & 1)) return false; // must cross the gap
+    if (this.distFront[k] === r) return false;
     return true;
   }
 
   // Cell k can take a chest (reached from direction d, or null for a supply chest).
   // A filtered chest (supply, hub) only feeds the sides it's filtered to, so
-  // belts next to it don't matter.
+  // belts next to it don't matter. A chest may sit on an underground's gap.
   /**
    * @param {number} k
    * @param {number | null} d
@@ -205,7 +209,7 @@ export class RouteGrid {
    * @param {boolean} [filtered]
    */
   chestOk(k, d, allow, filtered = false) {
-    if (k < 0 || !this.floor[k] || this.occ[k] !== FREE || this.gap[k] !== -1) return false;
+    if (k < 0 || !this.floor[k] || this.occ[k] !== FREE || this.distFront[k] !== -1) return false;
     if (this.reserved[k] !== -1 && !allow.has(k)) return false;
     // An unfiltered chest pushes into every neighbouring belt that doesn't point
     // into it, so no existing belt may sit next to it except one feeding it.
@@ -309,13 +313,15 @@ export class RouteGrid {
 
   /** @param {number} k @param {number} d @param {Set<number>} allow */
   _undergroundOk(k, d, allow) {
-    if (this.gap[k] !== -1) return false;
+    if (this.gap[k] !== -1 || this.distFront[k] === d) return false;
     for (let i = 0; i < UNDERGROUND_LENGTH; i++) {
       const c = this.step(k, d, i);
       if (c < 0 || !this.floor[c]) return false;
+      if (i > 0 && this.distFront[c] !== -1) return false; // only its entry may be in front of a distributor
       if (i === UNDERGROUND_GAP) {
         if (this.gap[c] !== -1 || this.reserved[c] !== -1) return false;
-        if (this.occ[c] === BELT ? (this.rot[c] & 1) === (d & 1) : this.occ[c] !== FREE) return false;
+        // The gap can pass under a crossing belt or a chest (UNDERGROUND_GAP_KINDS).
+        if (this.occ[c] === BELT ? (this.rot[c] & 1) === (d & 1) : this.occ[c] !== FREE && this.occ[c] !== CHEST) return false;
       } else if (this.occ[c] !== FREE || this.gap[c] !== -1
         || (this.reserved[c] !== -1 && !(i === 0 && allow.has(c)))) {
         return false;
@@ -577,7 +583,8 @@ export class RouteGrid {
     const out = [];
     for (const nd of this.net.values()) {
       if (nd.item !== item || !nd.up.has(src)) continue;
-      if (nd.kind === 'belt' && nd.prev.length === 1 && this.gap[nd.k] === -1) {
+      // A belt in front of a distributor stays a belt (no splitter or hub there).
+      if (nd.kind === 'belt' && nd.prev.length === 1 && this.gap[nd.k] === -1 && this.distFront[nd.k] === -1) {
         if (nd.din !== nd.rot) {
           // Splitter at a turn: one side keeps the line, the other starts the branch.
           const side = (nd.din + 1) % 4 === nd.rot ? (nd.din + 3) % 4 : (nd.din + 1) % 4;

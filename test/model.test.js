@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Layout, FLOOR, VOID, REPAIRABLE_SECTIONS } from '../src/model.js';
 import {
-  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, CAROUSEL_ART, BELT_MASTER_ICON, POWER_ICON, FLOOR_SECTIONS, FLOOR_GRID, stationVariants, extensionsFor, extensionArt,
+  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, BELT_MASTER_ICON, POWER_ICON, FLOOR_SECTIONS, FLOOR_GRID, FACTORY_DISTRIBUTORS, stationVariants, extensionsFor, extensionArt,
 } from '../src/catalog.js';
-import { factoryFloor, syncDistributors, DISTRIBUTORS, DEFAULT_REPAIRED } from '../src/floor.js';
+import { factoryFloor, DEFAULT_REPAIRED } from '../src/floor.js';
 
 const portsOf = (l, e) => l.ports(e).map((p) => `${p.kind}:${p.nx},${p.ny}`).sort();
 
@@ -34,11 +34,12 @@ test('underground conveyor: 1x5, crossable gap, ports at the ends', () => {
   assert.equal(l.entityAt(4, 4), null);
   assert.equal(l.gapAt(4, 4), u);
   assert.deepEqual(portsOf(l, u), ['in:1,4', 'out:7,4']);
-  // A belt may cross the gap; nothing else may.
+  // A belt or a chest may sit on the gap; nothing else may, and not on the rest.
   assert.equal(l.canPlace({ kind: 'belt', x: 4, y: 4 }).ok, true);
-  assert.equal(l.canPlace({ kind: 'chest', x: 4, y: 4 }).ok, false);
+  assert.equal(l.canPlace({ kind: 'chest', x: 4, y: 4 }).ok, true);
   assert.equal(l.canPlace({ kind: 'splitter', x: 4, y: 4 }).ok, false);
   assert.equal(l.canPlace({ kind: 'belt', x: 3, y: 4 }).ok, false);
+  assert.equal(l.canPlace({ kind: 'chest', x: 3, y: 4 }).ok, false);
   // Crossing belt line north -> south through the gap is valid.
   for (let y = 2; y <= 6; y++) l.add({ kind: 'belt', x: 4, y, rot: S });
   l.add({ kind: 'belt', x: 1, y: 4, rot: E });
@@ -58,6 +59,21 @@ test('underground gap must be floor; off-floor cells under the body block placem
   l.setTerrain(4, 1, FLOOR);
   l.setTerrain(6, 1, VOID);
   assert.equal(l.canPlace({ kind: 'underground', x: 2, y: 1, rot: E }).ok, false); // body off the floor
+});
+
+test('a chest on an underground gap is valid, and an underground may pass under a chest', () => {
+  const l = Layout.blank(10, 10);
+  l.add({ kind: 'underground', x: 2, y: 4, rot: E });
+  l.add({ kind: 'chest', x: 4, y: 4, stock: ['coal'], filters: { S: 'coal' } });
+  l.add({ kind: 'belt', x: 4, y: 3, rot: S }); // into the chest
+  l.add({ kind: 'belt', x: 4, y: 5, rot: S }); // out of it
+  assert.deepEqual(l.validate(), []);
+  const c = l.add({ kind: 'chest', x: 7, y: 7 });
+  assert.equal(l.canPlace({ kind: 'underground', x: 5, y: 7, rot: E }).ok, true); // gap at 7,7
+  assert.equal(l.canPlace({ kind: 'underground', x: 6, y: 7, rot: E }).ok, false); // body on the chest
+  l.add({ kind: 'underground', x: 7, y: 5, rot: S }); // gap at 7,7 under the chest
+  assert.deepEqual(l.validate().filter((i) => i.severity === 'error'), []);
+  assert.equal(l.entityAt(7, 7), c);
 });
 
 test('splitter takes from behind and outputs to both sides', () => {
@@ -214,7 +230,7 @@ test('validation flags common problems', () => {
 test('factory floor is valid and matches factory.json', () => {
   const floor = factoryFloor();
   assert.deepEqual(floor.validate(), []);
-  assert.equal(floor.entities.length, DISTRIBUTORS.length);
+  assert.equal(floor.entities.length, FACTORY_DISTRIBUTORS.length);
   const raw = JSON.parse(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
   // factory.json (format 1) sits 12 rows higher. The game's sections give the
   // same floor, except 4 cells by the east wall that the screenshot shows as wall.
@@ -256,7 +272,7 @@ test('format 1 factory files move down 12 rows and get their repaired sections',
   assert.equal(l.width, FLOOR_GRID.width);
   assert.equal(l.height, FLOOR_GRID.height);
   assert.deepEqual(l.getEntity(99), { id: 99, kind: 'belt', x: 5, y: 32, rot: 0, locked: true });
-  assert.deepEqual(l.entities.filter((e) => e.kind === 'distributor').map((e) => e.y), DISTRIBUTORS.map((d) => d.y));
+  assert.deepEqual(l.entities.filter((e) => e.kind === 'distributor').map((e) => e.y), FACTORY_DISTRIBUTORS.map((d) => d.y));
   // Saved again, it's format 2 with the sections, and loads unchanged.
   const json = l.toJSON();
   assert.equal(json.version, 2);
@@ -270,17 +286,45 @@ test('format 1 factory files move down 12 rows and get their repaired sections',
   assert.equal(own.toJSON().repaired, undefined);
 });
 
-test('distribution stations follow their floor section', () => {
+test('distribution stations are fixed in the wall, and follow the floor they feed', () => {
   const l = factoryFloor();
-  const before = [...l.terrain];
-  l.setRepaired([5]); // section 8 off: marble and iron ore sit on it
-  syncDistributors(l, before);
+  // One row below the floor, feeding its bottom row.
+  for (const d of l.entities) {
+    assert.ok(!l.isFloor(d.x, d.y) && l.isFloor(d.x, d.y - 1), `${d.material} at ${d.x},${d.y}`);
+    assert.equal(d.y, FLOOR_GRID.height - 2);
+  }
+  l.setRepaired([5]); // section 8 off: marble and iron ore feed it
   assert.deepEqual(l.entities.map((e) => e.material), ['coal', 'clay', 'sand', 'stone', 'wood_log']);
-  const off = [...l.terrain];
   l.setRepaired(DEFAULT_REPAIRED);
-  syncDistributors(l, off);
-  assert.deepEqual(l.entities.map((e) => e.material).sort(), DISTRIBUTORS.map((d) => d.material).sort());
+  assert.deepEqual(l.entities.map((e) => e.material).sort(), FACTORY_DISTRIBUTORS.map((d) => d.material).sort());
   assert.deepEqual(l.validate(), []);
+  // Distributors saved somewhere else (or extra ones) are put back where the factory has them.
+  const json = l.toJSON();
+  json.entities = [{ id: 1, kind: 'distributor', x: 3, y: 52, rot: 0, material: 'marble' }, { id: 2, kind: 'distributor', x: 5, y: 40, rot: 0, material: 'coal' }];
+  const back = Layout.fromJSON(json);
+  assert.deepEqual(back.entities.map((e) => `${e.material}@${e.x},${e.y}`).sort(), FACTORY_DISTRIBUTORS.map((d) => `${d.material}@${d.x},${d.y}`).sort());
+});
+
+test('in front of a distributor: empty, a belt or an underground entry, not pointing back', () => {
+  const l = factoryFloor();
+  const front = { x: 11, y: 52 }; // coal distributor at 11,53
+  const ok = (/** @type {any} */ e) => l.canPlace({ ...front, ...e }).ok;
+  assert.equal(ok({ kind: 'belt', rot: N }), true);
+  assert.equal(ok({ kind: 'belt', rot: E }), true);
+  assert.equal(ok({ kind: 'belt', rot: W }), true);
+  assert.equal(ok({ kind: 'belt', rot: S }), false);       // back into the distributor
+  assert.equal(ok({ kind: 'underground', rot: N }), true);  // entry there
+  assert.equal(ok({ kind: 'underground', rot: E }), false); // its exit would sit in front of the clay one at 15,53
+  assert.equal(l.canPlace({ kind: 'underground', x: 27, y: 52, rot: E }).ok, true); // the last one (wood) can go sideways
+  assert.equal(ok({ kind: 'chest' }), false);
+  assert.equal(ok({ kind: 'splitter', rot: N }), false);
+  assert.equal(ok({ kind: 'supply_station', rot: N }), false);
+  assert.equal(l.canPlace({ kind: 'station', type: 'smithy', level: 1, x: 10, y: 50 }).ok, false); // covers it
+  assert.equal(l.canPlace({ kind: 'underground', x: 9, y: 52, rot: E }).ok, false); // gap over it
+  assert.equal(l.canPlace({ kind: 'underground', x: 10, y: 52, rot: E }).ok, false); // body over it
+  // Validation catches what canPlace would refuse (e.g. from a file).
+  l.add({ kind: 'chest', ...front });
+  assert.match(l.validate().find((i) => i.severity === 'error').message, /Chest at 11,52 can't be in front of Distribution station \(Coal\) at 11,53/);
 });
 
 test('extensions: one per slot, only for their station, and recipes need theirs', () => {
@@ -315,7 +359,6 @@ test('conveyor, chest, talent and extension art files exist', () => {
   }
   for (const c of Object.values(CHEST_LEVELS)) exists(c.art);
   for (const t of Object.values(TALENTS)) exists(t.icon);
-  exists(CAROUSEL_ART.src);
   exists(BELT_MASTER_ICON);
   exists(POWER_ICON);
   for (const [type, def] of Object.entries(STATIONS)) {
@@ -349,7 +392,7 @@ test('a station side output needs a belt before a chest; a top output does not',
   assert.ok(!warns(top).some((m) => /side output/.test(m)));
 });
 
-test('factory power: 1 per station, belt and chest', () => {
+test('factory power: 1 per station, belt and chest, 2 per underground', () => {
   const l = Layout.blank(12, 8);
   l.add({ kind: 'station', type: 'smithy', level: 1, x: 1, y: 1 });
   l.add({ kind: 'belt', x: 5, y: 1, rot: E });
@@ -358,27 +401,31 @@ test('factory power: 1 per station, belt and chest', () => {
   l.add({ kind: 'splitter', x: 8, y: 3, rot: E });       // no power listed
   l.add({ kind: 'distributor', x: 0, y: 7, rot: N, material: 'coal' });
   assert.equal(l.power(), 4);
+  l.add({ kind: 'underground', x: 1, y: 5, rot: E });
+  assert.equal(l.power(), 6);
 });
 
-test('power supply: 4 built-in carousels of 4 zombies, 7 power each (10 with Belt Master)', async () => {
+test('power supply: 5 fixed carousels, 20 zombies, 7 power each (10 with Belt Master)', async () => {
   const { powerSupply } = await import('../src/model.js');
-  assert.deepEqual(powerSupply(112, 0, false), { used: 112, perZombie: 7, carousels: 4, available: 112, zombies: 16, carouselsNeeded: 4, missingCarousels: 0 });
-  assert.equal(powerSupply(113, 0, false).missingCarousels, 1);
-  assert.equal(powerSupply(113, 1, false).missingCarousels, 0);
-  assert.equal(powerSupply(160, 0, true).missingCarousels, 0);
-  assert.equal(powerSupply(161, 0, true).zombies, 17);
+  assert.deepEqual(powerSupply(140, false), { used: 140, perZombie: 7, carousels: 5, maxZombies: 20, available: 140, zombies: 20, over: 0 });
+  assert.equal(powerSupply(141, false).over, 1);
+  assert.equal(powerSupply(141, false).zombies, 21);
+  assert.equal(powerSupply(200, true).over, 0);
+  assert.equal(powerSupply(205, true).over, 5);
 });
 
-test('carousels are 3x3 with no ports; too much power is a warning', () => {
-  const l = Layout.blank(40, 40);
-  const c = l.add({ kind: 'carousel', x: 1, y: 1 });
-  assert.equal(l.footprint(c).length, 9);
-  assert.deepEqual(l.ports(c), []);
-  for (let x = 0; x < 40; x++) for (let y = 10; y < 13; y++) l.add({ kind: 'belt', x, y, rot: E }); // 120 power
-  const warn = () => l.validate().filter((i) => i.severity === 'warning' && /carousel/.test(i.message));
-  assert.equal(warn().length, 0);                     // 4 built in + 1 placed = 140 power
-  l.remove(c.id);
-  assert.match(warn()[0].message, /add 1 carousel/);  // 112 < 120
+test('power over the maximum is a warning', () => {
+  const l = Layout.blank(50, 5);
+  for (let x = 0; x < 50; x++) for (let y = 0; y < 3; y++) l.add({ kind: 'belt', x, y, rot: E }); // 150 power
+  const warn = () => l.validate().filter((i) => i.severity === 'warning' && /over the factory/.test(i.message));
+  assert.match(warn()[0].message, /Power 150 is over the factory's 140 \(20 zombies on 5 carousels\): 10 too many/);
   l.beltMaster = true;
-  assert.equal(warn().length, 0);                     // 160 with Belt Master
+  assert.equal(warn().length, 0); // 200 with Belt Master
+});
+
+test('placed zombie carousels from older files are dropped (the factory\'s are fixed)', () => {
+  const l = Layout.fromJSON({ terrain: ['.....', '.....', '.....'], entities: [
+    { id: 1, kind: 'carousel', x: 0, y: 0 }, { id: 2, kind: 'belt', x: 4, y: 0, rot: 0 },
+  ] });
+  assert.deepEqual(l.entities.map((e) => e.kind), ['belt']);
 });

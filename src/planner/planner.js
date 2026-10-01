@@ -6,7 +6,7 @@
 // route costs (belts, turns, undergrounds, splitters, chests) plus a large
 // penalty per connection that could not be routed.
 
-import { STATIONS, RECIPE_BY_ID, DIRS, CAROUSEL_SIZE, entityCells, stationVariants, isSupplyItem } from '../catalog.js';
+import { STATIONS, RECIPE_BY_ID, DIRS, entityCells, stationVariants, isSupplyItem } from '../catalog.js';
 import { RouteGrid, DX, DY, COST } from './router.js';
 import { powerOf, powerSupply } from '../model.js';
 
@@ -40,6 +40,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {number} [seed]
  * @property {number} [gap] free cells kept between stations
  * @property {number} [failCost] penalty per unrouted connection
+ * @property {number} [overPowerCost] penalty per point of power over the maximum
  * @property {number} [supplyCornerCost] extra cost per cell from the supply corner
  * @property {number} [timeMs] search budget (used by the worker)
  */
@@ -67,7 +68,7 @@ import { powerOf, powerSupply } from '../model.js';
 
 /** @typedef {{ reason?: 'no room', station?: number, item?: string, from?: string, to?: string }} Failure */
 
-/** @typedef {{ score: number, failed: number, failures: Failure[], grid: RouteGrid, edges: number, power: number, missingCarousels: number }} Evaluation */
+/** @typedef {{ score: number, failed: number, failures: Failure[], grid: RouteGrid, edges: number, power: number, over: number }} Evaluation */
 /** @typedef {{ placements: Placement[], score: number, failed: number }} SearchState */
 
 /**
@@ -76,16 +77,16 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {Placement[]} placements
  * @property {Failure[]} failures
  * @property {number} score
- * @property {{ stations: number, belts: number, undergrounds: number, splitters: number, chests: number, supplyStations: number, power: number, zombies: number, carousels: number, carouselsNotPlaced: number, connections: number, iterations: number }} stats
+ * @property {{ stations: number, belts: number, undergrounds: number, splitters: number, chests: number, supplyStations: number, power: number, available: number, over: number, zombies: number, connections: number, iterations: number }} stats
  */
 
 // Penalty per unrouted connection, far above any realistic belt cost so that
 // routing everything always wins.
 export const FAIL_COST = 1000;
-// Score per zombie carousel a plan needs beyond those it has: about the power
-// one carousel gives (28, or 40 with Belt Master) in belts, so the search trades
-// belts to stay under a carousel, and the planner places the ones still needed.
-const CAROUSEL_COST = 30;
+// Score per point of power over the factory's maximum (its carousels are fixed,
+// so more can't be added). Belts and chests cost 1 power each, so over the
+// maximum every piece saved counts this much more.
+export const OVER_POWER_COST = 20;
 // "Supply: ..." outputs end in a supply station, preferably near the floor's
 // top-right corner: this much extra cost per cell away from it, and how many of
 // the nearest free cells are offered.
@@ -166,9 +167,8 @@ export class Planner {
     this.options = options;
     this.random = rng(options.seed ?? 1);
     this.stations = stationInstances(production);
-    // Power the kept pieces already use, and the carousels already on the floor.
+    // Power the kept pieces already use.
     this.basePower = powerOf(layout.entities);
-    this.baseCarousels = layout.entities.filter((e) => e.kind === 'carousel').length;
     this.beltMaster = !!layout.beltMaster;
     this._buildBase();
     this._buildAprons();
@@ -207,7 +207,10 @@ export class Planner {
         if (!l.inBounds(p.nx, p.ny)) continue;
         const k = g.key(p.nx, p.ny);
         if (g.occ[k] === 0) g.reserved[k] = 0;
-        if (e.kind === 'distributor' && p.kind === 'out') this.distributors.set(e.material, { k, d: p.dir });
+        if (e.kind === 'distributor' && p.kind === 'out') {
+          this.distributors.set(e.material, { k, d: p.dir });
+          g.distFront[k] = rev(p.dir);
+        }
       }
     }
     this.base = g;
@@ -447,7 +450,7 @@ export class Planner {
   _evaluate(placements) {
     const b = this.base;
     const g = new RouteGrid(b.W, b.H);
-    for (const f of /** @type {const} */ (['floor', 'occ', 'rot', 'gap', 'reserved', 'chestFeeds'])) g[f].set(b[f]);
+    for (const f of /** @type {const} */ (['floor', 'occ', 'rot', 'gap', 'reserved', 'chestFeeds', 'distFront'])) g[f].set(b[f]);
 
     // Stations and their port access cells. Each port also holds the next cell
     // straight out (a "stub") until it is connected, so passing belts can't box
@@ -602,9 +605,9 @@ export class Planner {
 
     const placedStations = placements.filter(Boolean).length;
     const power = this.basePower + placedStations + powerOf([...g.placed.values()]);
-    const { missingCarousels } = powerSupply(power, this.baseCarousels, this.beltMaster);
-    const score = cost + (this.options.failCost ?? FAIL_COST) * failures.length + CAROUSEL_COST * missingCarousels;
-    return { score, failed: failures.length, failures, grid: g, edges: edges.length, power, missingCarousels };
+    const { over } = powerSupply(power, this.beltMaster);
+    const score = cost + (this.options.failCost ?? FAIL_COST) * failures.length + (this.options.overPowerCost ?? OVER_POWER_COST) * over;
+    return { score, failed: failures.length, failures, grid: g, edges: edges.length, power, over };
   }
 
   /** @param {number} a @param {number} b */
@@ -690,41 +693,6 @@ export class Planner {
 
   // Entities for the best placement found, ready to add to the layout.
   /** @returns {PlanResult} */
-  /**
-   * Zombie carousels for the power a plan still lacks: on free 3x3 floor, the
-   * most tucked-away spots first (fewest free cells around them).
-   * @param {RouteGrid} g routed grid (carousels are blocked into it)
-   * @param {number} n
-   * @returns {EntitySpec[]}
-   */
-  _placeCarousels(g, n) {
-    /** @type {EntitySpec[]} */
-    const out = [];
-    const S = CAROUSEL_SIZE;
-    const free = (/** @type {number} */ x, /** @type {number} */ y) => {
-      if (x < 0 || y < 0 || x >= g.W || y >= g.H) return false;
-      const k = g.key(x, y);
-      return !!g.floor[k] && g.occ[k] === 0 && g.reserved[k] === -1 && g.gap[k] === -1;
-    };
-    for (let i = 0; i < n; i++) {
-      let best = null, bestOpen = Infinity;
-      for (let y = 0; y + S <= g.H; y++) {
-        for (let x = 0; x + S <= g.W; x++) {
-          let ok = true;
-          for (let dy = 0; dy < S && ok; dy++) for (let dx = 0; dx < S && ok; dx++) ok = free(x + dx, y + dy);
-          if (!ok) continue;
-          let open = 0;
-          for (let d = -1; d <= S; d++) open += +free(x + d, y - 1) + +free(x + d, y + S) + (d >= 0 && d < S ? +free(x - 1, y + d) + +free(x + S, y + d) : 0);
-          if (open < bestOpen) { bestOpen = open; best = { x, y }; }
-        }
-      }
-      if (!best) break;
-      for (let dy = 0; dy < S; dy++) for (let dx = 0; dx < S; dx++) g.block(g.key(best.x + dx, best.y + dy));
-      out.push({ kind: 'carousel', x: best.x, y: best.y });
-    }
-    return out;
-  }
-
   result() {
     const { placements } = this.best;
     const r = this.evaluate(placements, true);
@@ -740,10 +708,8 @@ export class Planner {
       entities.push({ kind: 'station', type: s.type, level: s.level, variant: p.variant, x: p.x, y: p.y, recipe: s.recipe, extensions: RECIPE_BY_ID[s.recipe]?.extension ? [RECIPE_BY_ID[s.recipe].extension] : [], inputs: byPort });
     });
     for (const e of r.grid.placed.values()) entities.push({ ...e });
-    const carousels = this._placeCarousels(r.grid, r.missingCarousels);
-    entities.push(...carousels);
     for (const e of entities) { e.planned = true; e.locked = false; }
-    const supply = powerSupply(this.basePower + powerOf(entities), this.baseCarousels + carousels.length, this.beltMaster);
+    const supply = powerSupply(this.basePower + powerOf(entities), this.beltMaster);
     const count = (/** @type {string} */ kind) => entities.filter((e) => e.kind === kind).length;
     return {
       entities,
@@ -752,8 +718,8 @@ export class Planner {
       score: r.score,
       stats: {
         stations: count('station'), belts: count('belt'), undergrounds: count('underground'),
-        splitters: count('splitter'), chests: count('chest'), supplyStations: count('supply_station'), power: supply.used, zombies: supply.zombies,
-        carousels: carousels.length, carouselsNotPlaced: r.missingCarousels - carousels.length, connections: r.edges,
+        splitters: count('splitter'), chests: count('chest'), supplyStations: count('supply_station'), power: supply.used, available: supply.available,
+        over: supply.over, zombies: supply.zombies, connections: r.edges,
         iterations: this.iterations,
       },
     };

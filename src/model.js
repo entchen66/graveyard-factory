@@ -4,7 +4,7 @@
 
 import {
   DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
-  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor,
+  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor,
 } from './catalog.js';
 
 /** @typedef {import('./types.js').Dir} Dir */
@@ -209,6 +209,19 @@ export class Layout {
     }
     this.terrain = sectionTerrain(this.repaired);
     this._occ = null;
+    this._syncDistributors();
+  }
+
+  // The factory's distributors are fixed: one for each in FACTORY_DISTRIBUTORS
+  // whose floor (the cell it feeds) is repaired, and no others.
+  _syncDistributors() {
+    const want = FACTORY_DISTRIBUTORS.filter((d) => this.isFloor(d.x, d.y - 1));
+    const same = (/** @type {EntitySpec} */ e, /** @type {typeof want[number]} */ d) => e.x === d.x && e.y === d.y && e.material === d.material && e.rot === 0;
+    this.entities = this.entities.filter((e) => e.kind !== 'distributor' || want.some((d) => same(e, d)));
+    for (const d of want) {
+      if (!this.entities.some((e) => e.kind === 'distributor' && same(e, d))) this.add({ kind: 'distributor', rot: 0, locked: true, ...d });
+    }
+    this._occ = null;
   }
 
   // ---- entities ------------------------------------------------------------
@@ -277,22 +290,40 @@ export class Layout {
   canPlace(e, ignoreIds = []) {
     /** @param {Entity | null} other */
     const live = (other) => other && !ignoreIds.includes(other.id) ? other : null;
-    for (const c of entityCells(e)) {
+    const fronts = this.distributorFronts();
+    for (const [i, c] of entityCells(e).entries()) {
       if (!this.inBounds(c.x, c.y)) return { ok: false, reason: 'Outside the layout' };
+      const front = fronts.get(c.y * this.width + c.x);
+      if (front && live(front.dist) && !fitsFront(e, i, front.back)) {
+        return { ok: false, reason: `In front of ${describeEntity(front.dist)} only a belt or an underground's entry can go, not pointing into it` };
+      }
       const t = this.getTerrain(c.x, c.y);
       const occupant = live(this.entityAt(c.x, c.y));
       const gapOwner = live(this.gapAt(c.x, c.y));
       if (c.gap) {
         if (UNDERGROUND_GAP_MUST_BE_FLOOR && t !== FLOOR) return { ok: false, reason: 'Gap is off the factory floor' };
-        if (occupant && occupant.kind !== 'belt') return { ok: false, reason: `Only a belt can cross the gap, not ${describeEntity(occupant)}` };
+        if (occupant && !UNDERGROUND_GAP_KINDS.includes(occupant.kind)) return { ok: false, reason: `Only a belt or chest can sit on the gap, not ${describeEntity(occupant)}` };
         if (gapOwner) return { ok: false, reason: `Gap overlaps the gap of ${describeEntity(gapOwner)}` };
         continue;
       }
-      if (t !== FLOOR) return { ok: false, reason: 'Off the factory floor' };
+      if (t !== FLOOR && !ENTITY_KINDS[e.kind]?.fixed) return { ok: false, reason: 'Off the factory floor' };
       if (occupant) return { ok: false, reason: `Overlaps ${describeEntity(occupant)}` };
-      if (gapOwner && e.kind !== 'belt') return { ok: false, reason: `Only a belt can cross the gap of ${describeEntity(gapOwner)}` };
+      if (gapOwner && !UNDERGROUND_GAP_KINDS.includes(e.kind)) return { ok: false, reason: `Only a belt or chest can sit on the gap of ${describeEntity(gapOwner)}` };
     }
     return { ok: true };
+  }
+
+  // Cells distributors feed: cell key -> the distributor and the direction
+  // pointing back into it.
+  /** @returns {Map<number, { dist: Entity, back: Dir }>} */
+  distributorFronts() {
+    const out = new Map();
+    for (const d of this.entities) {
+      if (d.kind !== 'distributor') continue;
+      const p = this.ports(d)[0];
+      if (this.inBounds(p.nx, p.ny)) out.set(p.ny * this.width + p.nx, { dist: d, back: mod4(p.dir + 2) });
+    }
+    return out;
   }
 
   /**
@@ -387,12 +418,9 @@ export class Layout {
     return powerOf(this.entities);
   }
 
-  /**
-   * Power supply: zombies on the built-in and placed carousels, and what the
-   * layout's power use needs.
-   */
+  /** Power supply: the factory's carousels against the layout's power use. */
   powerSupply() {
-    return powerSupply(this.power(), this.entities.filter((e) => e.kind === 'carousel').length, this.beltMaster);
+    return powerSupply(this.power(), this.beltMaster);
   }
 
   // ---- validation ----------------------------------------------------------
@@ -419,10 +447,10 @@ export class Layout {
         if (c.gap) {
           if (UNDERGROUND_GAP_MUST_BE_FLOOR && !this.isFloor(x, y)) add('error', e, `${describeEntity(e)}: gap is off the factory floor`, [[x, y]]);
           const crossing = this.entityAt(x, y);
-          if (crossing && crossing.kind !== 'belt') add('error', e, `${describeEntity(crossing)} sits in the gap of ${describeEntity(e)}`, [[x, y]]);
+          if (crossing && !UNDERGROUND_GAP_KINDS.includes(crossing.kind)) add('error', e, `${describeEntity(crossing)} sits in the gap of ${describeEntity(e)}`, [[x, y]]);
           continue;
         }
-        if (!this.isFloor(x, y)) { add('error', e, `${describeEntity(e)} is off the factory floor`, [[x, y]]); break; }
+        if (!this.isFloor(x, y) && !ENTITY_KINDS[e.kind]?.fixed) { add('error', e, `${describeEntity(e)} is off the factory floor`, [[x, y]]); break; }
         const k = y * this.width + x;
         if (seen.has(k)) { add('error', e, `${describeEntity(e)} overlaps ${describeEntity(seen.get(k))}`, [[x, y]]); break; }
         seen.set(k, e);
@@ -464,9 +492,17 @@ export class Layout {
 
       for (const p of this.ports(e)) this._validatePort(e, p, add);
     }
+    for (const [k, { dist, back }] of this.distributorFronts()) {
+      const x = k % this.width, y = (k / this.width) | 0;
+      for (const o of new Set([this.entityAt(x, y), this.gapAt(x, y)])) {
+        if (!o) continue;
+        const i = entityCells(o).findIndex((c) => c.x === x && c.y === y);
+        if (!fitsFront(o, i, back)) add('error', o, `${describeEntity(o)} can't be in front of ${describeEntity(dist)}: only a belt or an underground's entry can go there, not pointing into it`, [[x, y]]);
+      }
+    }
     const power = this.powerSupply();
-    if (power.missingCarousels) {
-      add('warning', null, `Power ${power.used} needs ${power.zombies} zombies on ${power.carouselsNeeded} carousels; the factory has ${power.carousels}: add ${power.missingCarousels} carousel(s)`, []);
+    if (power.over) {
+      add('warning', null, `Power ${power.used} is over the factory's ${power.available} (${power.maxZombies} zombies on ${power.carousels} carousels): ${power.over} too many`, []);
     }
     return issues;
   }
@@ -535,6 +571,8 @@ export class Layout {
     if (data.width) layout.resize({ right: data.width - layout.width });
     if (data.height) layout.resize({ bottom: data.height - layout.height });
     for (const e of data.entities ?? []) {
+      // Zombie carousels used to be placeable; the factory's are fixed.
+      if (/** @type {string} */ (e.kind) === 'carousel') continue;
       if (!ENTITY_KINDS[e.kind]) throw new Error(`Unknown entity kind "${e.kind}"`);
       if (e.kind === 'station' && !STATIONS[e.type]) throw new Error(`Unknown station type "${e.type}"`);
       // Ids missing from old files are assigned below.
@@ -580,6 +618,14 @@ function normalizeEntity(e) {
     e.rot ??= 0;
   }
   return e;
+}
+
+// May cell `i` of entity `e` sit in front of a distributor? Only a belt or an
+// underground's entry cell, not pointing back into it (DISTRIBUTOR_FRONT_KINDS).
+/** @param {EntitySpec} e @param {number} i @param {Dir} back */
+function fitsFront(e, i, back) {
+  if (!DISTRIBUTOR_FRONT_KINDS.includes(e.kind) || e.rot === back) return false;
+  return e.kind !== 'underground' || i === 0;
 }
 
 /**
@@ -651,22 +697,17 @@ function sectionsIn(layout) {
 }
 
 /**
- * Power available from `placed` carousels on the floor plus the built-in ones,
- * against `used` power: zombies and carousels that needs.
+ * Power the factory's fixed carousels give, against `used` power: the zombies
+ * that needs, and how much power is over the maximum.
  * @param {number} used
- * @param {number} placed
  * @param {boolean} beltMaster
  */
-export function powerSupply(used, placed, beltMaster) {
-  const { perZombie, perZombieBeltMaster, zombiesPerCarousel, builtInCarousels } = ZOMBIE_POWER;
+export function powerSupply(used, beltMaster) {
+  const { perZombie, perZombieBeltMaster, zombiesPerCarousel, carousels } = ZOMBIE_POWER;
   const each = beltMaster ? perZombieBeltMaster : perZombie;
-  const carousels = builtInCarousels + placed;
-  const zombies = Math.ceil(used / each);
-  const carouselsNeeded = Math.ceil(zombies / zombiesPerCarousel);
-  return {
-    used, perZombie: each, carousels, available: carousels * zombiesPerCarousel * each,
-    zombies, carouselsNeeded, missingCarousels: Math.max(0, carouselsNeeded - carousels),
-  };
+  const maxZombies = carousels * zombiesPerCarousel;
+  const available = maxZombies * each;
+  return { used, perZombie: each, carousels, maxZombies, available, zombies: Math.ceil(used / each), over: Math.max(0, used - available) };
 }
 
 /**
