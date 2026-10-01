@@ -17,6 +17,7 @@
 /** @typedef {import('./types.js').Sprite} Sprite */
 /** @typedef {import('./types.js').Cell} Cell */
 /** @typedef {import('./types.js').Bounds} Bounds */
+/** @typedef {import('./types.js').FloorSection} FloorSection */
 /** @typedef {[number, number]} Offset */
 /** @typedef {{ name: string, rotatable?: boolean, hasMaterial?: boolean }} EntityKindDef */
 /** @typedef {{ name: string, icon: string }} TalentDef */
@@ -92,6 +93,7 @@ const OTHER_NAMES = {
   carved_stone: 'Carved Stone', polished_marble: 'Polished Marble', bronze_detail: 'Bronze Detail',
   polished_bronze: 'Polished Bronze', bronze_gear: 'Bronze Gear', iron_nails: 'Iron Nails',
   iron_detail: 'Iron Detail', advanced_detail: 'Advanced Detail',
+  steel_detail: 'Steel Detail', engineering_details: 'Engineering Details', steel_screws: 'Steel Screws',
 };
 /** @type {Item[]} */
 export const OTHER_ITEMS = Object.entries(OTHER_NAMES).map(([id, name]) => ({ id, name, color: hashColor(id) }));
@@ -481,6 +483,38 @@ export const CAROUSEL_SIZE = 3;
 /** Art relative to the 3x3 footprint's top-left, game px (from the prefab). */
 export const CAROUSEL_ART = { src: 'assets/stations/carousel.webp', dx: 10, dy: -46 };
 export const BELT_MASTER_ICON = 'assets/ui/perk_beltmaster.webp';
+
+// The factory floor is the game's `conveyor` world zone, made of ten build areas
+// (`gd_conveyor_zone_build_area_<id>`), each a few BoxCollider rectangles. They
+// are given here in grid cells: column = (x + 120) / 0.64, row = (−392.7 − z) / 0.6
+// from world x, z. Some edges fall on half cells, and a cell is floor only when
+// the rectangles of the sections in use cover all of it (that reproduces the
+// floor the user confirmed). Sections 6, 7, 9 and 10 are there from the start.
+// The others start disabled: the craft `conv_pins_repair_<id>` on the section's
+// Broken Conveyor Mechanism (`conveyor_place_pins_<id>_broken`) enables them.
+// `repair` lists that craft's materials (item id -> count).
+/** @type {FloorSection[]} */
+export const FLOOR_SECTIONS = [
+  { id: 1, name: 'Far north-west', repair: { bronze_gear: 4, polished_bronze: 2 },
+    rects: [[1, 0, 10.5, 10.5], [1, 10.5, 10.5, 12.5]] },
+  { id: 2, name: 'Far north', repair: { bronze_gear: 4, advanced_detail: 4, polished_bronze: 2 },
+    rects: [[10.5, 0, 20, 10.5], [10.5, 10.5, 20, 12.5]] },
+  { id: 3, name: 'North-west', repair: { engineering_details: 4, steel_detail: 4, steel_screws: 8 },
+    rects: [[1, 14, 10.5, 26.5], [1, 12.5, 10.5, 14], [0, 14, 1, 15]] },
+  { id: 4, name: 'North', repair: { engineering_details: 4, steel_detail: 4, steel_screws: 8 },
+    rects: [[10.5, 14, 20, 26.5], [10.5, 12.5, 20, 14]] },
+  { id: 5, name: 'West', repair: { bronze_gear: 4, advanced_detail: 4, polished_bronze: 2 },
+    rects: [[4, 26.5, 10.5, 38.5], [4, 38.5, 10.5, 40.5], [1, 26.5, 4, 36]] },
+  { id: 6, name: 'Centre', rects: [[10.5, 28, 21.5, 40.5], [10.5, 26.5, 20, 28]] },
+  { id: 7, name: 'East',
+    rects: [[23, 24, 32, 39.5], [21.5, 28, 23, 40.5], [23, 39.5, 32, 40.5], [32, 27.5, 35, 36], [32, 36, 33, 38]] },
+  { id: 8, name: 'South-west', repair: { bronze_gear: 4, polished_bronze: 2 },
+    rects: [[1, 42, 10.5, 53], [4, 40.5, 10.5, 42]] },
+  { id: 9, name: 'South', rects: [[10.5, 40.5, 21.5, 53]] },
+  { id: 10, name: 'South-east', rects: [[21.5, 40.5, 32, 53]] },
+];
+// The fixed floor plan's grid; every section fits in it.
+export const FLOOR_GRID = { width: 42, height: 55 };
 
 // Belts can be fed from their sides (merging), confirmed in-game.
 export const BELT_ACCEPTS_FROM_SIDES = true;

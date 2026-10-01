@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { Layout, VOID } from '../src/model.js';
+import { Layout, VOID, REPAIRABLE_SECTIONS } from '../src/model.js';
+import { factoryFloor } from '../src/floor.js';
 import { N, E, S, RECIPES } from '../src/catalog.js';
 import { planProduction, chooseRecipe } from '../src/planner/production.js';
 import { RouteGrid } from '../src/planner/router.js';
@@ -167,6 +168,14 @@ test('planner: Supply: Iron on the real factory floor routes everything', () => 
   assert.equal(res.stats.stations, 9);
   // Over the built-in 112 power, so the plan brings its own carousels.
   assert.ok(res.stats.power > 112 && res.stats.carousels > 0 && res.stats.carouselsNotPlaced === 0, JSON.stringify(res.stats));
+});
+
+test('planner: plans on the fully repaired floor validate', () => {
+  const layout = factoryFloor(REPAIRABLE_SECTIONS);
+  const runs = [1, 2].map((seed) => runPlan(layout, [{ item: 'building_kit_1', rate: 1 }], 600, seed));
+  const { res, out } = runs.find((r) => !r.res.failures.length) ?? runs[0];
+  assert.deepEqual(res.failures, []);
+  assert.deepEqual(out.validate().filter((i) => i.severity !== 'info').map((i) => i.message), []);
 });
 
 test('planner: stationInstances splits fractional crafts over stations', () => {

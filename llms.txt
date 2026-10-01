@@ -11,6 +11,7 @@ Use it at https://naerymdan.github.io/graveyard-factory-optimizer/ — source an
 - Station extensions, one small and one big slot per station: Smithy (Bellows; Hammer, Press, Grindstone), Assembly bench (Auto-hammer, Spinning wheel; Drill press, Sewing machine, Lathe), Kitchen (Millstone, Sealing machine; Stove).
 - Pieces: conveyor belts, splitters, underground conveyors (1×5, crossable gap), conveyor chests I/II with per-side output filters, distribution stations for raw materials, and supply stations for "Supply: …" crates.
 - Factory power: each station, conveyor belt and chest uses 1 power (the yellow gear). Power comes from zombies on zombie carousels (3×3): the factory has 4 built in, 4 zombies each, 7 power per zombie (10 with the Belt Master perk). The editor shows power used/available and zombies needed; the planner keeps power low and places extra carousels when needed.
+- Floor sections: the factory floor is the game's ten conveyor build areas. Six can be repaired in the game (with Bronze Gears, Polished Bronze, Advanced Details, or Steel and Engineering Details and Steel Screws); toggles choose which are repaired, and the editor and planner only use repaired floor.
 - Rules modelled: belts never cross but merge from the side; splitters output to both sides; chests output to neighbouring belts on their filtered sides (every side without filters); a station's left or right output needs a belt before a chest.
 
 ## Docs

@@ -37,7 +37,7 @@ The app is entirely static (HTML, CSS, ES modules, a module Web Worker, WebP ima
 | `src/render.js` | Canvas drawing: terrain, background, entities, sprites, icons and overlays. |
 | `src/editor.js` | Tools, mouse/keyboard input, side panels, undo/redo and autosave. |
 | `src/background.js` | Background image and its alignment to the grid. |
-| `src/floor.js` | The real factory floor (terrain + distributors), generated from `factory.json`. Used on first launch and kept by **Clear**. |
+| `src/floor.js` | The real factory floor: the game's floor sections (`FLOOR_SECTIONS` in the catalog) and the distribution stations. Used on first launch and kept by **Clear**. |
 | `src/main.js` | Entry point. |
 | `src/planner/production.js` | Production math: targets → recipes, station counts and levels, supply per minute. |
 | `src/planner/router.js` | Belt routing on a grid (belts, undergrounds, splitters, chest hubs) and the per-item belt networks. |
@@ -50,7 +50,7 @@ The app is entirely static (HTML, CSS, ES modules, a module Web Worker, WebP ima
 | `art-src/` | Lossless masters that aren't published (the stitched floor screenshot). |
 | `src/types.js` | Shared JSDoc types; `jsconfig.json` configures the type check. |
 | `.github/workflows/pages.yml` | Test, type-check and publish to GitHub Pages. |
-| `factory.json` | The real factory floor as exported from the editor (the source of `src/floor.js`). |
+| `factory.json` | The user's factory floor as exported from the editor (format 1, before floor sections). A test checks the sections reproduce it. |
 | `compose.yaml` | nginx container serving the folder. |
 
 ## Editor
@@ -61,6 +61,7 @@ The app is entirely static (HTML, CSS, ES modules, a module Web Worker, WebP ima
 - **Select** `V`: click to inspect/edit, drag to move, `R`/`Shift+R` rotate, `Del` delete. Erase `E`, or right-drag with any tool.
 - Wheel to zoom, middle-drag or Space+drag to pan, `0` fits the layout, Ctrl+Z / Ctrl+Y for undo/redo.
 - **Clear** removes everything placed on the floor; the floor and its distribution stations stay (undoable). The floor plan itself is fixed to the real factory and its background.
+- **Floor sections** (left panel): one toggle per section of the floor that's repaired in the game (1–5 and 8; 6, 7, 9 and 10 are there from the start), with the repair materials as icons. Only repaired sections are floor, for the editor and the planner. Turning a section off clears the current setup (after a confirmation when there's anything to clear; one undo step). Distribution stations on a section that isn't repaired are left out, and come back when it is. Sections that aren't repaired are hatched on the canvas with their number, and hovering a toggle outlines its section. A layout imported with its own floor (not the factory's) has no toggles.
 - The grid is drawn only over usable floor cells.
 - **Background**: the in-game factory floor is drawn under the grid, stretched so each 64×48 px game unit fills one cell. With the background on, the editor's own floor is only drawn (semi-transparent, with cyan edges) while a terrain tool is selected. Toggle it in the top bar.
 - **Stations** are drawn with their in-game art for their level and layout, plus the art of any fitted extensions (always opaque), in front of a rounded square in the station colour (red smithy, blue assembly bench, green kitchen), which shows through the gaps in the art. They show `level · product` in the middle, and under it the worker talent the recipe needs, e.g. `5` with the gear icon. Each ingredient's icon is on its input port and the product's icon on the output, with quantities over 1. With one ingredient, it's shown on both inputs.
@@ -107,7 +108,8 @@ Locked and hand-placed entities are kept as obstacles; the planner doesn't reuse
 
 ```json
 {
-  "format": "factory-layout", "version": 1, "name": "…", "width": 42, "height": 20,
+  "format": "factory-layout", "version": 2, "name": "…", "width": 42, "height": 55,
+  "repaired": [5, 8],
   "terrain": ["   ....", "  .....", "......."],
   "entities": [
     {"id":1,"kind":"distributor","rot":0,"x":3,"y":17,"material":"stone","locked":true},
@@ -122,12 +124,13 @@ Locked and hand-placed entities are kept as obstacles; the planner doesn't reuse
 ```
 
 - Terrain characters: `.` floor, space or `_` outside. Older files' `#` (wall) and `O` (column) load as outside.
+- `repaired` lists the repaired floor sections. When it's there, the terrain is rebuilt from the sections on load (the saved rows are for reading); without it, the terrain rows are the floor.
 - `beltMaster: true` at the top level records the Belt Master perk.
 - `extensions` on a station lists its fitted extensions (at most one per slot). `level` on a chest is 1 or 2 (Conveyor Chest I/II).
 - `x`, `y` is the top-left cell (the entry cell for undergrounds). y grows downward, so the bottom of the factory is the highest y.
 - `rot` is 0=N, 1=E, 2=S, 3=W: the travel direction for belts, undergrounds and splitters, the output side for distributors, and the input side for supply stations. Stations and chests have no `rot`.
 - Entities placed by the planner have `"planned": true`. Planned stations also record which ingredient each input port takes: `"inputs": ["iron_ingot", null]`. Planner chests have a `role` of `supply`, `output` or `hub`.
-- Files saved by earlier versions are migrated on load: a chest's `material` becomes `stock`, station `rot` is dropped, a station without `extensions` gets the one its recipe needs, a chest without `level` is Chest I, and walls and columns become outside.
+- Files saved by earlier versions are migrated on load: a format 1 file of the factory floor (42×43) moves down 12 rows onto the 42×55 grid and gets the sections its floor had in `repaired`, a chest's `material` becomes `stock`, station `rot` is dropped, a station without `extensions` gets the one its recipe needs, a chest without `level` is Chest I, and walls and columns become outside.
 
 ## Piece rules
 
@@ -158,13 +161,16 @@ From the game files but not yet checked in-game:
 - The kitchen is 2×2, levels I–II, and its four layouts (below) come from its prefab's colliders and connectors.
 - Extension slots: each station has one small and one big slot (`customBuildAreaId` in the game's building data). Smithy: Bellows small; Hammer, Press, Grindstone big. Assembly bench: Auto-hammer, Spinning wheel small; Drill press, Sewing machine, Lathe big. Kitchen: Millstone, Sealing machine small; Stove big.
 - Recipe `time` is the game's craft duration in seconds, and `talent` is its `talentLock`, read as the level of the station's worker talent (gear = smithy, hammer = assembly bench, wheat = kitchen) the recipe needs.
+- Floor sections (`FLOOR_SECTIONS`): a cell is floor only when the rectangles of the sections in use cover all of it. That reproduces the floor the user confirmed (sections 5–10), except 4 cells by the east wall (33–34, 36–37) that the old floor had and the screenshot shows as wall; sections 1–4 haven't been checked in-game.
+- Distribution stations on a section that isn't repaired are assumed unusable, so the editor takes them off.
 - Belt line caps: a belt counts as fed when something outputs into it from directly behind (a turn is the start of a new line), and as continuing when the cell ahead accepts from it.
 
 ## Game data — `src/catalog.js`
 
 - **Recipes**: 67, from the game's craft definitions (every conveyor craft except the Bioreactor's Zombie Power): station and levels, inputs and outputs per batch, craft `time` (seconds), worker `talent` level, unlock `tech` and required `extension`. Outputs that scale with a worker perk (Fabric, Clothes, Flour) use the base amount. The 36 recipe ids from the earlier wiki data are unchanged.
 - How the data was read (UnityPy, outside the repo): the `GameBalance` MonoBehaviour in `resources.assets` holds the item, world-object, craft, building and tech definitions. Its type tree was generated from the game's `Managed/Assembly-CSharp.dll` (UnityPy's TypeTreeGenerator), and read with a small reader because string-array fields trip UnityPy's own; it decodes exactly to the object's last byte. Crafts with `isConveyorCraft` are the factory recipes; `craftsIn` gives station and levels, `extensionNeedId` the extension, `talentLock` the talent, `duration` the time. The unlock tech is the tech whose `craftsAfterUnlock` lists the craft. Station talents come from the world-object definitions, extension slots from the building definitions.
-- **Items**: 7 raw materials (from distributors), 21 chest-only ingredients that no recipe makes (Bronze Nails, Special Wood, Zombie Power, Steel Ingot, Flax, Wheat, Beer, and the crops and wines, with quality tiers ★–★★★ as separate items), 45 factory products, and 14 other items that can sit in chests.
+- **Items**: 7 raw materials (from distributors), 21 chest-only ingredients that no recipe makes (Bronze Nails, Special Wood, Zombie Power, Steel Ingot, Flax, Wheat, Beer, and the crops and wines, with quality tiers ★–★★★ as separate items), 45 factory products, and 17 other items that can sit in chests (including Steel Detail, Engineering Details and Steel Screws, used to repair floor sections).
+- **Floor sections** (`FLOOR_SECTIONS`, `FLOOR_GRID`): the factory floor is the `conveyor` world zone (`Assets/AddressableAssets/WorldZones/conveyor.prefab`), whose ten children `gd_conveyor_zone_build_area_<n>` each hold one or more `conveyor_place` BoxCollider build areas. Areas 6, 7, 9 and 10 are active in the prefab; 1–5 and 8 start inactive. In GameBalance the craft `conv_pins_repair_<n>` repairs `conveyor_place_pins_<n>_broken` ("Broken Conveyor Mechanism") and runs `EnableGDPointById("gd_conveyor_zone_build_area_<n>")`; its materials are `repair`. The zone's world origin is (−106.88, −413.1) (its `WorldZones/Data/conveyor.asset`), so grid column = (x + 120) / 0.64 and row = (−392.7 − z) / 0.6 in world units; the carousel build areas land on the carousel rugs in the screenshot, which checks the mapping. Section names are descriptive (the game has none).
 - **Station levels**: Assembly bench I–III, Smithy I–II, Kitchen I–II.
 - **Factory power** (`POWER_COST`, `ZOMBIE_POWER`): stations, conveyor belts and chests cost 1 each; carousels hold 4 zombies of 7 power (10 with Belt Master, `perk_beltmaster` in the game data), and the factory starts with 4 (from the user). Undergrounds, splitters, distributors and supply stations cost nothing for now; extensions aren't counted.
 - **Worker talents** (`TALENTS`): gear (smithy), hammer (assembly bench), wheat (kitchen), with the game's talent icons.
@@ -192,7 +198,7 @@ Kitchen (2×2, `KITCHEN_VARIANTS`):
 
 The floor background is stitched from in-game screenshots (not kept). Station, extension, conveyor and chest art and item and talent icons are extracted from the game files. All art is at the game's scale of 64×48 px per grid unit (`UNIT_PX`). Sprites are lossless WebP (pixel-identical to the extracted PNGs); only the floor background is lossy. Together `assets/` is about 0.6 MB (5.2 MB as PNGs).
 
-- `assets/factory_floor.webp`: four screenshots of the whole factory, stitched into one (lossy WebP, quality 90; the lossless master is `art-src/factory_floor.png`, which isn't deployed). Its alignment to the grid is fixed in `src/background.js`: grid cell (0,0)'s top-left corner is at image pixel (226, −310).
+- `assets/factory_floor.webp`: four screenshots of the whole factory, stitched into one (the lossless master is `art-src/factory_floor.png`, which isn't deployed), extended 958 px upwards for sections 1–4, which the screenshots show broken or not at all (lossy WebP, quality 90). Its alignment to the grid is fixed in `src/background.js`: grid cell (0,0)'s top-left corner is at image pixel (226, 72). The game builds the floor tiles at runtime, so there's no art to extract: sections 1–4 are drawn with the floor's own repeating pattern (96 × 192 px, the per-pixel median over 13 repeats of clean floor in sections 6, 9 and 10, which drops the hatches and evens out the lamps), phase-locked to the grid, over the sections' rectangles, plus the hazard stripe along the new outer edge (2 px yellow dashes, 8 on/8 off horizontally and 6/6 vertically, 5–6 px outside the edge, as in the screenshots). Done with a throwaway script outside the repo.
 - `assets/stations/<type>_<level>_<variant>.webp`: station art (transparent) for every level and all four layouts, rendered from the game's station prefabs (`conveyor_furnace_t1/t2` = Smithy I–II, `conveyor_assemblybench_t1–t3` = Assembly bench I–III, `conveyor_kitchen_t1/t2`). The art is unlit albedo, so it looks brighter than the in-game lighting, and has no extensions attached. `sprites[level][variant].dx/dy` in `STATIONS` places the art relative to the footprint, in in-game pixels, computed from the prefab geometry. The hoppers and chimney that overhang the footprint are purely for looks.
   - How it was rendered (UnityPy, outside the repo): the prefabs live in the Addressables bundles under `StreamingAssets/aa/StandaloneWindows64`. A station body is a 3D mesh (`…-MERGE S_OBJ`) whose submesh *i* is textured with the `…_prt<i+1>` texture that its `Object3DMesh` script references. The meshes and the flat sprites were rasterised with an orthographic projection derived from the grid (1 unit = 100 px across, screen y = 60·height + 80·depth, so a 0.64 × 0.6 unit cell is 64 × 48 px), with a depth test. Skipped: the `_gnd`/`_sh` ground-shadow decals, `Decor Light` (glow and working animation), shadow casters and the blackout mesh.
   - The prefab's four layout roots map to the variants by their connector cells: `Left` = `out_top_left`, `Right` = `out_top_right`, `Up` = `in_left`, `Down` = `in_right`. Footprint cell (x, y) sits at world x = (x + 0.12)·0.64, z = (3 − y)·0.6.

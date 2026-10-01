@@ -4,7 +4,7 @@
 
 import {
   DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
-  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, entityCells, recipesFor,
+  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor,
 } from './catalog.js';
 
 /** @typedef {import('./types.js').Dir} Dir */
@@ -37,6 +37,7 @@ import {
  * @property {number} [nextId]
  * @property {PlannerSettings} [planner]
  * @property {boolean} [beltMaster] the player has the Belt Master perk
+ * @property {number[] | null} [repaired] floor sections repaired; null when the terrain isn't the factory's sections
  */
 
 /**
@@ -52,6 +53,7 @@ import {
  * @property {EntitySpec[]} [entities]
  * @property {PlannerSettings} [planner]
  * @property {boolean} [beltMaster]
+ * @property {number[]} [repaired]
  */
 
 /** @typedef {{ ok: boolean, reason?: string }} PlaceCheck */
@@ -68,13 +70,22 @@ export const TERRAIN_TYPES = [
 /** @type {Record<string, Terrain>} */
 const TERRAIN_ALIASES = { '_': VOID, '#': VOID, 'O': VOID, 'o': VOID, '0': VOID };
 
-export const FORMAT_VERSION = 1;
+// Version 2: the factory grid gained 12 rows on top for the floor sections
+// that can be repaired, and the floor comes from `repaired`.
+export const FORMAT_VERSION = 2;
+// Version 1 files of the factory floor were this size; they move down 12 rows.
+const V1_FACTORY = { width: 42, height: 43, shift: 12 };
+
+// Floor sections that start disabled and can be repaired in the game.
+export const REPAIRABLE_SECTIONS = FLOOR_SECTIONS.filter((s) => s.repair).map((s) => s.id);
 
 export class Layout {
   /** @param {LayoutInit} [init] */
-  constructor({ name = 'Untitled factory', width, height, terrain, entities = [], nextId, planner, beltMaster = false } = {}) {
+  constructor({ name = 'Untitled factory', width, height, terrain, entities = [], nextId, planner, beltMaster = false, repaired = null } = {}) {
     this.name = name;
     this.beltMaster = beltMaster; // Belt Master perk: more power per zombie
+    /** @type {number[] | null} */
+    this.repaired = repaired; // repaired floor sections, when the terrain is the factory's (see setRepaired)
     this.planner = planner; // planner settings (targets, options), saved with the layout
     this.width = width;
     this.height = height;
@@ -184,6 +195,19 @@ export class Layout {
     this.terrain = terrain;
     for (const e of this.entities) { e.x += left; e.y += top; }
     this.entities = this.entities.filter((e) => entityCells(e).every((c) => this.inBounds(c.x, c.y)));
+    this._occ = null;
+  }
+
+  // Use the factory's floor plan with these sections repaired (the others that
+  // can be repaired are not): the terrain becomes the floor they give, on the
+  // fixed grid. Entities are kept, even where the floor goes.
+  /** @param {number[]} ids */
+  setRepaired(ids) {
+    this.repaired = REPAIRABLE_SECTIONS.filter((id) => ids.includes(id));
+    if (this.width !== FLOOR_GRID.width || this.height !== FLOOR_GRID.height) {
+      this.resize({ right: FLOOR_GRID.width - this.width, bottom: FLOOR_GRID.height - this.height });
+    }
+    this.terrain = sectionTerrain(this.repaired);
     this._occ = null;
   }
 
@@ -493,6 +517,7 @@ export class Layout {
       legend: { '.': 'floor', ' ': 'outside' },
       terrain: rows,
       entities: this.entities.map((e) => ({ ...e })),
+      ...(this.repaired ? { repaired: [...this.repaired] } : {}),
       ...(this.planner ? { planner: structuredClone(this.planner) } : {}),
       ...(this.beltMaster ? { beltMaster: true } : {}),
     };
@@ -518,6 +543,14 @@ export class Layout {
     layout.nextId = layout.entities.reduce((m, e) => Math.max(m, e.id ?? 0), 0) + 1;
     for (const e of layout.entities) if (e.id == null) e.id = layout.nextId++;
     layout._occ = null;
+    if (Array.isArray(data.repaired)) {
+      layout.setRepaired(data.repaired);
+    } else if ((data.version ?? 1) < 2 && layout.width === V1_FACTORY.width && layout.height === V1_FACTORY.height) {
+      // The factory floor before sections: move it down onto the new grid and
+      // work out which sections its floor had.
+      layout.resize({ top: V1_FACTORY.shift });
+      layout.setRepaired(sectionsIn(layout));
+    }
     return layout;
   }
 }
@@ -578,6 +611,43 @@ function parseTerrainRows(lines) {
       return t;
     }),
   );
+}
+
+/**
+ * The factory's floor with the sections there from the start plus `repaired`:
+ * one flag per cell of FLOOR_GRID (row-major), set where those sections'
+ * rectangles cover the whole cell. Rectangle edges are on half cells, so each
+ * quarter of a cell is either inside a rectangle or not.
+ * @param {number[]} repaired
+ * @returns {boolean[]}
+ */
+export function sectionFloor(repaired) {
+  const rects = FLOOR_SECTIONS.filter((s) => !s.repair || repaired.includes(s.id)).flatMap((s) => s.rects);
+  /** @param {number} px @param {number} py */
+  const covered = (px, py) => rects.some(([x0, y0, x1, y1]) => px > x0 && px < x1 && py > y0 && py < y1);
+  const out = [];
+  for (let y = 0; y < FLOOR_GRID.height; y++) {
+    for (let x = 0; x < FLOOR_GRID.width; x++) {
+      out.push(covered(x + 0.25, y + 0.25) && covered(x + 0.75, y + 0.25) && covered(x + 0.25, y + 0.75) && covered(x + 0.75, y + 0.75));
+    }
+  }
+  return out;
+}
+
+/**
+ * @param {number[]} repaired
+ * @returns {Terrain[]}
+ */
+function sectionTerrain(repaired) {
+  return sectionFloor(repaired).map((f) => (f ? FLOOR : VOID));
+}
+
+// Repairable sections whose floor is all there in a layout on the factory grid
+// (for files saved before sections existed).
+/** @param {Layout} layout */
+function sectionsIn(layout) {
+  const base = sectionFloor([]);
+  return REPAIRABLE_SECTIONS.filter((id) => sectionFloor([id]).every((f, k) => !f || base[k] || layout.terrain[k] === FLOOR));
 }
 
 /**

@@ -12,6 +12,7 @@
  * Editor overlays for drawLayout; everything is optional.
  * @typedef {object} Overlay
  * @property {{ shown: boolean, draw(ctx: Ctx, cell: number): void }} [background]
+ * @property {number | null} [highlightSection] floor section to outline
  * @property {boolean} [editingTerrain]
  * @property {boolean} [showGrid]
  * @property {boolean} [showFlow]
@@ -28,7 +29,7 @@
 
 import {
   N, DIRS, STATIONS, ITEMS, ITEM_BY_ID, ROMAN, RECIPE_BY_ID, TALENTS, UNIT_PX, EXTENSION_ART_FRAME, extensionArt, entityBounds, entityCells,
-  ART_DIRS, CONVEYOR_ART, CHEST_LEVELS, CHEST_ART_OFFSET, CAROUSEL_ART, CAROUSEL_SIZE,
+  ART_DIRS, CONVEYOR_ART, CHEST_LEVELS, CHEST_ART_OFFSET, CAROUSEL_ART, CAROUSEL_SIZE, FLOOR_SECTIONS,
 } from './catalog.js';
 
 /** @type {Record<string, HTMLImageElement>} */
@@ -74,7 +75,7 @@ function drawItem(ctx, id, cx, cy, size) {
   ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size);
   ctx.restore();
 }
-import { FLOOR } from './model.js';
+import { FLOOR, REPAIRABLE_SECTIONS, sectionFloor } from './model.js';
 
 const COLORS = {
   void: '#15171c',
@@ -97,6 +98,9 @@ const COLORS = {
   info: '#6e8bd8',
   flow: 'rgba(120,230,255,0.9)',
   flowShadow: 'rgba(0,0,0,0.55)',
+  lockedFloor: 'rgba(8,9,12,0.6)',
+  lockedHatch: 'rgba(245,165,36,0.28)',
+  lockedText: 'rgba(245,190,90,0.85)',
 };
 
 /** @param {Ctx} ctx @param {Layout} layout @param {View} view @param {Overlay} [overlay] */
@@ -129,6 +133,7 @@ export function drawLayout(ctx, layout, view, overlay = {}) {
     drawTerrain(ctx, layout, cell, x0, y0, x1, y1);
   }
   if (overlay.showGrid !== false) drawGrid(ctx, layout, cell, x0, y0, x1, y1, bgShown);
+  drawSections(ctx, layout, cell, overlay.highlightSection);
 
   // Layout boundary.
   ctx.strokeStyle = 'rgba(255,255,255,0.15)';
@@ -220,6 +225,57 @@ function drawGrid(ctx, layout, cell, x0, y0, x1, y1, strong) {
     }
   }
   ctx.stroke();
+}
+
+/** @type {boolean[] | null} floor with every section repaired (FLOOR_GRID cells) */
+let fullFloor = null;
+
+// Floor sections that aren't repaired: darkened and hatched, with their number.
+// `highlight` (a section hovered in the list) is outlined, repaired or not.
+/** @param {Ctx} ctx @param {Layout} layout @param {number} cell @param {number | null | undefined} highlight */
+function drawSections(ctx, layout, cell, highlight) {
+  if (!layout.repaired) return;
+  fullFloor ??= sectionFloor(REPAIRABLE_SECTIONS);
+  const locked = new Path2D();
+  let any = false;
+  for (let y = 0; y < layout.height; y++) {
+    for (let x = 0; x < layout.width; x++) {
+      if (!fullFloor[y * layout.width + x] || layout.isFloor(x, y)) continue;
+      locked.rect(x * cell, y * cell, cell, cell);
+      any = true;
+    }
+  }
+  if (any) {
+    ctx.save();
+    ctx.clip(locked);
+    ctx.fillStyle = COLORS.lockedFloor;
+    ctx.fillRect(0, 0, layout.width * cell, layout.height * cell);
+    ctx.strokeStyle = COLORS.lockedHatch;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const w = layout.width * cell, hgt = layout.height * cell, step = Math.max(6, cell / 2);
+    for (let d = -hgt; d < w; d += step) { ctx.moveTo(d, hgt); ctx.lineTo(d + hgt, 0); }
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = COLORS.lockedText;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `600 ${Math.max(10, Math.round(cell * 0.7))}px system-ui, sans-serif`;
+    for (const s of FLOOR_SECTIONS) {
+      if (!s.repair || layout.repaired.includes(s.id)) continue;
+      const [x0, y0, x1, y1] = s.rects[0];
+      ctx.fillText(`${s.id} · not repaired`, (x0 + x1) / 2 * cell, (y0 + y1) / 2 * cell);
+    }
+  }
+  const hl = FLOOR_SECTIONS.find((s) => s.id === highlight);
+  if (hl) {
+    ctx.save();
+    ctx.strokeStyle = COLORS.select;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    for (const [x0, y0, x1, y1] of hl.rects) ctx.strokeRect(x0 * cell, y0 * cell, (x1 - x0) * cell, (y1 - y0) * cell);
+    ctx.restore();
+  }
 }
 
 // Outline where floor meets anything else, so the plan reads clearly over the background.

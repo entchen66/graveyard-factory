@@ -82,6 +82,15 @@
 /** @typedef {{ name: string, station: StationType, slot: 'small' | 'big', icon?: string }} Extension */
 
 /**
+ * A section of the factory floor (one of the game's conveyor build areas).
+ * @typedef {object} FloorSection
+ * @property {number} id the game's build area number
+ * @property {string} name where it is
+ * @property {[number, number, number, number][]} rects x0, y0, x1, y1 in grid cells (edges may be half cells)
+ * @property {Record<string, number>} [repair] repair materials, item id -> count; absent for sections there from the start
+ */
+
+/**
  * @typedef {object} Issue
  * @property {'error' | 'warning' | 'info'} severity
  * @property {number | null} entityId

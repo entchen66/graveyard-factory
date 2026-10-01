@@ -115,6 +115,13 @@ input[type=text], input[type=number], select, textarea {
 .stats .over { color: var(--error); }
 .perk { display: flex; align-items: center; gap: 4px; }
 .perk img { width: 20px; height: 20px; image-rendering: pixelated; }
+.sections { display: flex; flex-direction: column; gap: 2px; }
+.section-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.section-row:hover { background: var(--panel-2); }
+.section-name { flex: 1; }
+.costs { display: flex; gap: 4px; color: var(--muted); font-size: 11px; }
+.cost { display: inline-flex; align-items: center; }
+.cost img { width: 18px; height: 18px; image-rendering: pixelated; }
 .power img { width: 15px; height: 15px; vertical-align: -3px; margin-right: 4px; image-rendering: pixelated; }
 .about p { margin: 0 0 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .about ul { margin: 0 0 6px; padding-left: 16px; color: var(--muted); font-size: 12px; }

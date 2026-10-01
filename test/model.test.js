@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { Layout, FLOOR, VOID } from '../src/model.js';
+import { Layout, FLOOR, VOID, REPAIRABLE_SECTIONS } from '../src/model.js';
 import {
-  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, CAROUSEL_ART, BELT_MASTER_ICON, POWER_ICON, stationVariants, extensionsFor, extensionArt,
+  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, CAROUSEL_ART, BELT_MASTER_ICON, POWER_ICON, FLOOR_SECTIONS, FLOOR_GRID, stationVariants, extensionsFor, extensionArt,
 } from '../src/catalog.js';
-import { factoryFloor, DISTRIBUTORS } from '../src/floor.js';
+import { factoryFloor, syncDistributors, DISTRIBUTORS, DEFAULT_REPAIRED } from '../src/floor.js';
 
 const portsOf = (l, e) => l.ports(e).map((p) => `${p.kind}:${p.nx},${p.ny}`).sort();
 
@@ -215,8 +215,72 @@ test('factory floor is valid and matches factory.json', () => {
   const floor = factoryFloor();
   assert.deepEqual(floor.validate(), []);
   assert.equal(floor.entities.length, DISTRIBUTORS.length);
-  const exported = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  // factory.json (format 1) sits 12 rows higher. The game's sections give the
+  // same floor, except 4 cells by the east wall that the screenshot shows as wall.
+  const differ = [];
+  for (let y = 0; y < floor.height; y++) {
+    for (let x = 0; x < floor.width; x++) {
+      if ((raw.terrain[y - 12]?.[x] === '.') !== floor.isFloor(x, y)) differ.push(`${x},${y}`);
+    }
+  }
+  assert.deepEqual(differ, ['33,36', '34,36', '33,37', '34,37']);
+  const exported = Layout.fromJSON(raw);
+  assert.deepEqual(exported.repaired, DEFAULT_REPAIRED);
   assert.equal(floor.terrainToText(), exported.terrainToText());
+});
+
+test('floor sections: a cell is floor only when repaired sections cover all of it', () => {
+  const floorCells = (/** @type {number[]} */ ids) => factoryFloor(ids).terrain.filter((t) => t === FLOOR).length;
+  assert.equal(floorCells([]), 596);
+  assert.equal(floorCells(DEFAULT_REPAIRED), 838);
+  assert.equal(floorCells(REPAIRABLE_SECTIONS), 1352);
+  // Column 10 straddles sections 5 and 6: floor only with both.
+  assert.ok(factoryFloor([5]).isFloor(10, 30));
+  assert.ok(!factoryFloor([]).isFloor(10, 30));
+  // Row 26 is half section 3/4, half 5/6.
+  assert.ok(!factoryFloor(DEFAULT_REPAIRED).isFloor(5, 26));
+  assert.ok(factoryFloor([3, 5]).isFloor(5, 26));
+  // Every section fits the grid, and the ones there from the start have no repair.
+  for (const s of FLOOR_SECTIONS) {
+    for (const [x0, y0, x1, y1] of s.rects) assert.ok(x0 >= 0 && y0 >= 0 && x1 <= FLOOR_GRID.width && y1 <= FLOOR_GRID.height && x0 < x1 && y0 < y1, `section ${s.id}`);
+    for (const id of Object.keys(s.repair ?? {})) assert.ok(ITEM_BY_ID[id], `section ${s.id}: unknown item ${id}`);
+  }
+  assert.deepEqual(REPAIRABLE_SECTIONS, [1, 2, 3, 4, 5, 8]);
+});
+
+test('format 1 factory files move down 12 rows and get their repaired sections', () => {
+  const raw = JSON.parse(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  raw.entities.push({ id: 99, kind: 'belt', x: 5, y: 20, rot: 0 });
+  const l = Layout.fromJSON(raw);
+  assert.equal(l.width, FLOOR_GRID.width);
+  assert.equal(l.height, FLOOR_GRID.height);
+  assert.deepEqual(l.getEntity(99), { id: 99, kind: 'belt', x: 5, y: 32, rot: 0, locked: true });
+  assert.deepEqual(l.entities.filter((e) => e.kind === 'distributor').map((e) => e.y), DISTRIBUTORS.map((d) => d.y));
+  // Saved again, it's format 2 with the sections, and loads unchanged.
+  const json = l.toJSON();
+  assert.equal(json.version, 2);
+  assert.deepEqual(json.repaired, DEFAULT_REPAIRED);
+  assert.equal(Layout.fromJSON(json).terrainToText(), l.terrainToText());
+  assert.deepEqual(Layout.fromJSON(json).getEntity(99), l.getEntity(99));
+  // Layouts with their own floor aren't touched.
+  const own = Layout.fromJSON({ terrain: ['....', '.  .'] });
+  assert.equal(own.repaired, null);
+  assert.equal(own.terrainToText(), '....\n.  .');
+  assert.equal(own.toJSON().repaired, undefined);
+});
+
+test('distribution stations follow their floor section', () => {
+  const l = factoryFloor();
+  const before = [...l.terrain];
+  l.setRepaired([5]); // section 8 off: marble and iron ore sit on it
+  syncDistributors(l, before);
+  assert.deepEqual(l.entities.map((e) => e.material), ['coal', 'clay', 'sand', 'stone', 'wood_log']);
+  const off = [...l.terrain];
+  l.setRepaired(DEFAULT_REPAIRED);
+  syncDistributors(l, off);
+  assert.deepEqual(l.entities.map((e) => e.material).sort(), DISTRIBUTORS.map((d) => d.material).sort());
+  assert.deepEqual(l.validate(), []);
 });
 
 test('extensions: one per slot, only for their station, and recipes need theirs', () => {

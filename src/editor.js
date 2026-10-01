@@ -3,11 +3,11 @@
 
 import {
   DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
-  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, CAROUSEL_SIZE, extensionsFor, recipesFor, entityBounds,
+  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, CAROUSEL_SIZE, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
 } from './catalog.js';
 import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
 import { drawLayout, loadArt } from './render.js';
-import { factoryFloor } from './floor.js';
+import { factoryFloor, syncDistributors } from './floor.js';
 import { Background } from './background.js';
 import { PlannerPanel } from './planner/panel.js';
 
@@ -98,6 +98,8 @@ export class Editor {
     this.redoStack = [];
     /** @type {Issue[]} */
     this.issues = [];
+    /** @type {number | null} floor section highlighted on the canvas */
+    this.hoverSection = null;
     this.layout = this.loadSaved() ?? factoryFloor();
     this.background = new Background(() => this.requestDraw());
     loadArt(() => this.requestDraw());
@@ -165,6 +167,7 @@ export class Editor {
     /** @type {HTMLInputElement} */ (this.$('layout-name')).value = this.layout.name;
     /** @type {HTMLButtonElement} */ (document.querySelector('[data-action=undo]')).disabled = !this.undoStack.length;
     /** @type {HTMLButtonElement} */ (document.querySelector('[data-action=redo]')).disabled = !this.redoStack.length;
+    this.renderSections();
     this.renderToolOptions();
     this.renderInspector();
     this.renderIssues();
@@ -234,6 +237,7 @@ export class Editor {
         showIssues: /** @type {HTMLInputElement} */ (this.$('show-issues')).checked,
         issues: this.preview ? this.previewIssues : this.issues,
         background: this.background,
+        highlightSection: this.hoverSection,
         editingTerrain: !!this.terrainTool(),
         selectedId: this.selectedId,
         hover: this.hover,
@@ -587,6 +591,29 @@ export class Editor {
     this.status(n ? `Cleared ${n} pieces (Undo to go back)` : 'Nothing to clear');
   }
 
+  // Mark a floor section repaired or not. Taking floor away clears the current
+  // setup (as Clear does), after asking when there's anything to clear; it's one
+  // undo step either way.
+  /** @param {number} id @param {boolean} on */
+  setSectionRepaired(id, on) {
+    const repaired = this.layout.repaired ?? [];
+    const pieces = this.layout.entities.filter((e) => e.kind !== 'distributor');
+    const name = `section ${id} (${FLOOR_SECTIONS.find((s) => s.id === id).name.toLowerCase()})`;
+    if (!on && pieces.length && !confirm(`Turning off ${name} clears the current setup (${pieces.length} pieces). Continue?`)) {
+      this.renderSections();
+      return;
+    }
+    if (this.preview) this.planner.discard();
+    this.selectedId = null;
+    this.mutate(() => {
+      const before = [...this.layout.terrain];
+      if (!on) for (const e of pieces) this.layout.remove(e.id);
+      this.layout.setRepaired(on ? [...repaired, id] : repaired.filter((x) => x !== id));
+      syncDistributors(this.layout, before);
+    });
+    this.status(on ? `Repaired ${name}` : `Turned off ${name}${pieces.length ? `; cleared ${pieces.length} pieces (Undo to go back)` : ''}`);
+  }
+
   exportJSON() {
     const blob = new Blob([formatLayoutJSON(this.layout.toJSON())], { type: 'application/json' });
     const a = h('a', { href: URL.createObjectURL(blob), download: `${slug(this.layout.name)}.json` });
@@ -595,6 +622,33 @@ export class Editor {
   }
 
   // ---- side panels ---------------------------------------------------------
+
+  // One toggle per floor section that can be repaired, with the game's repair
+  // materials. The planner only uses repaired floor.
+  renderSections() {
+    const el = this.$('sections');
+    const repaired = this.layout.repaired;
+    if (!repaired) {
+      el.replaceChildren(h('p', { class: 'hint' }, 'This layout has its own floor, not the factory\'s sections.'));
+      return;
+    }
+    const rows = FLOOR_SECTIONS.filter((s) => s.repair).map((s) => {
+      const box = h('input', { type: 'checkbox' });
+      box.checked = repaired.includes(s.id);
+      box.addEventListener('change', () => this.setSectionRepaired(s.id, box.checked));
+      const cost = Object.entries(s.repair).map(([id, n]) => {
+        const item = ITEM_BY_ID[id];
+        return h('span', { class: 'cost', title: `${n} ${item?.name ?? id}` }, item?.icon ? h('img', { src: item.icon, alt: item.name }) : null, `${n}`);
+      });
+      const row = h('label', { class: 'section-row', title: `Section ${s.id}: repair materials ${Object.entries(s.repair).map(([id, n]) => `${n} ${ITEM_BY_ID[id]?.name ?? id}`).join(', ')}` },
+        box, h('span', { class: 'section-name' }, `${s.id} · ${s.name}`), h('span', { class: 'costs' }, ...cost));
+      row.addEventListener('pointerenter', () => { this.hoverSection = s.id; this.requestDraw(); });
+      row.addEventListener('pointerleave', () => { this.hoverSection = null; this.requestDraw(); });
+      return row;
+    });
+    el.replaceChildren(...rows,
+      h('p', { class: 'hint' }, 'Repaired sections are floor for the editor and planner. Turning one off clears the current setup.'));
+  }
 
   renderToolOptions() {
     const el = this.$('tool-options');
