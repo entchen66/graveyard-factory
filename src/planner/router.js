@@ -114,11 +114,15 @@ export class RouteGrid {
     this.occ = new Uint8Array(n);       // FREE / BLOCKED / BELT / CHEST
     this.rot = new Int8Array(n).fill(-1);
     this.gap = new Int8Array(n).fill(-1);      // rot of the underground whose gap is here
+    this.body = new Int8Array(n).fill(-1);     // rot of the underground with a belt cell here
     this.reserved = new Int32Array(n).fill(-1); // port access cell, owner token
     // In front of a distributor: the direction back into it. Only a belt or an
-    // underground's entry may go there, not pointing back (DISTRIBUTOR_FRONT_KINDS).
+    // underground's belt cell may go there, not pointing back
+    // (DISTRIBUTOR_FRONT_KINDS); the planner only puts an underground's entry
+    // there, so no other line takes in the distributor's material.
     this.distFront = new Int8Array(n).fill(-1);
-    // Bit r set: a belt here with rotation r would be fed by an adjacent chest.
+    // Bit r set: a belt (or underground belt cell) here with rotation r would be
+    // fed by an adjacent chest.
     // A chest pushes into every neighbouring belt not pointing into it, on the
     // sides it outputs from: its filtered sides, or every side with no filters.
     this.chestFeeds = new Uint8Array(n);
@@ -211,12 +215,14 @@ export class RouteGrid {
   chestOk(k, d, allow, filtered = false) {
     if (k < 0 || !this.floor[k] || this.occ[k] !== FREE || this.distFront[k] !== -1) return false;
     if (this.reserved[k] !== -1 && !allow.has(k)) return false;
-    // An unfiltered chest pushes into every neighbouring belt that doesn't point
-    // into it, so no existing belt may sit next to it except one feeding it.
+    // An unfiltered chest pushes into every neighbouring belt (or underground
+    // belt cell) that doesn't point into it, so none may sit next to it except
+    // one feeding it.
     if (filtered) return true;
     for (let dd = 0; dd < 4; dd++) {
       const j = this.step(k, dd);
       if (j >= 0 && this.occ[j] === BELT && this.rot[j] !== rev(dd)) return false;
+      if (j >= 0 && this.body[j] !== -1 && this.body[j] !== rev(dd)) return false;
     }
     return true;
   }
@@ -317,14 +323,18 @@ export class RouteGrid {
     for (let i = 0; i < UNDERGROUND_LENGTH; i++) {
       const c = this.step(k, d, i);
       if (c < 0 || !this.floor[c]) return false;
-      if (i > 0 && this.distFront[c] !== -1) return false; // only its entry may be in front of a distributor
+      if (i > 0 && this.distFront[c] !== -1) return false; // only its entry goes in front of a distributor
       if (i === UNDERGROUND_GAP) {
         if (this.gap[c] !== -1 || this.reserved[c] !== -1) return false;
-        // The gap can pass under a crossing belt or a chest (UNDERGROUND_GAP_KINDS).
+        // The gap can pass under a crossing belt or a chest. Undergrounds may
+        // also cross each other (UNDERGROUND_GAP_KINDS), but the planner doesn't
+        // build that: over 10 seeds it left more connections unrouted.
         if (this.occ[c] === BELT ? (this.rot[c] & 1) === (d & 1) : this.occ[c] !== FREE && this.occ[c] !== CHEST) return false;
       } else if (this.occ[c] !== FREE || this.gap[c] !== -1
         || (this.reserved[c] !== -1 && !(i === 0 && allow.has(c)))) {
         return false;
+      } else if (this.chestFeeds[c] & (1 << d)) {
+        return false; // a neighbouring chest would push into it, like into a belt
       }
     }
     return true;
@@ -353,14 +363,14 @@ export class RouteGrid {
   // The search does not track the cells a route itself uses, so a route can run
   // into itself. Returns the cells used twice (or the route's own belts leading
   // away from a chest it places); empty if the route is sound. Crossing its own path through an
-  // underground's gap is fine.
+  // underground's gap (with a belt or another underground) is fine.
   /**
    * @param {RoutePath} path
    * @returns {number[]}
    */
   conflicts(path) {
     /** @type {Map<number, string>} */
-    const use = new Map(); // k -> 'belt' | 'body' | 'gap:<axis>' | 'chest'
+    const use = new Map(); // k -> 'belt:<axis>' | 'body:<axis>' | 'gap:<axis>' | 'crossed'
     /** @type {Set<number>} */
     const bad = new Set();
     /** @param {number} k @param {string} what */
@@ -368,7 +378,7 @@ export class RouteGrid {
       const had = use.get(k);
       if (had == null) { use.set(k, what); return; }
       /** @param {string} a @param {string} b */
-      const gapBelt = (a, b) => a.startsWith('gap:') && b.startsWith('belt:') && a.slice(4) !== b.slice(5);
+      const gapBelt = (a, b) => a.startsWith('gap:') && /^(belt|body):/.test(b) && a.slice(-1) !== b.slice(-1);
       if (gapBelt(had, what) || gapBelt(what, had)) { use.set(k, 'crossed'); return; }
       bad.add(k);
     };
@@ -378,14 +388,16 @@ export class RouteGrid {
         const d = s.act - 4;
         for (let i = 0; i < UNDERGROUND_LENGTH; i++) {
           const c = this.step(s.k, d, i);
-          claim(c, i === UNDERGROUND_GAP ? `gap:${d & 1}` : 'body');
+          claim(c, `${i === UNDERGROUND_GAP ? 'gap' : 'body'}:${d & 1}`);
         }
       }
     }
     // Chests this route places. Supply and hub chests are filtered to their
     // outputs, so only their own cell matters. Next to an (unfiltered) output
     // chest, the route's belts may only point into it.
-    const beltRot = new Map(path.steps.filter((st) => st.act < 4).map((st) => [st.k, st.act]));
+    // Belt cells and their rotation, the undergrounds' included.
+    const beltRot = new Map(path.steps.flatMap((st) => st.act < 4 ? [[st.k, st.act]]
+      : Array.from({ length: UNDERGROUND_LENGTH }, (_, i) => i).filter((i) => i !== UNDERGROUND_GAP).map((i) => [this.step(st.k, st.act - 4, i), st.act - 4])));
     const o = path.start?.origin;
     const first = path.steps[0];
     /** @type {number[]} */
@@ -502,7 +514,7 @@ export class RouteGrid {
         for (let i = 0; i < UNDERGROUND_LENGTH; i++) cells.push(this.step(s.k, d, i));
         cells.forEach((c, i) => {
           if (i === UNDERGROUND_GAP) this.gap[c] = d;
-          else this.occ[c] = BLOCKED;
+          else { this.occ[c] = BLOCKED; this.body[c] = d; }
         });
         // Entry and exit are network nodes; the body in between just blocks.
         nodes.push(/** @type {NetNode} */ ({ k: s.k, kind: 'underground', item, rot: d, din: s.din }));

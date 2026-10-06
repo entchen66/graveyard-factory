@@ -4,7 +4,7 @@
 
 import {
   DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
-  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor,
+  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor,
 } from './catalog.js';
 
 /** @typedef {import('./types.js').Dir} Dir */
@@ -213,8 +213,14 @@ export class Layout {
   }
 
   // The factory's distributors are fixed: one for each in FACTORY_DISTRIBUTORS
-  // whose floor (the cell it feeds) is repaired, and no others.
+  // whose floor (the cell it feeds) is repaired, and no others. The same goes
+  // for the cellar, which keeps what it holds.
   _syncDistributors() {
+    const c = FACTORY_CELLAR;
+    const cellarOn = this.isFloor(c.x + DIRS[c.rot].dx, c.y + DIRS[c.rot].dy);
+    const isCellar = (/** @type {EntitySpec} */ e) => e.x === c.x && e.y === c.y && e.rot === c.rot;
+    this.entities = this.entities.filter((e) => e.kind !== 'cellar' || (cellarOn && isCellar(e)));
+    if (cellarOn && !this.entities.some((e) => e.kind === 'cellar')) this.add({ kind: 'cellar', ...c, stock: [], locked: true });
     const want = FACTORY_DISTRIBUTORS.filter((d) => this.isFloor(d.x, d.y - 1));
     const same = (/** @type {EntitySpec} */ e, /** @type {typeof want[number]} */ d) => e.x === d.x && e.y === d.y && e.material === d.material && e.rot === 0;
     this.entities = this.entities.filter((e) => e.kind !== 'distributor' || want.some((d) => same(e, d)));
@@ -258,7 +264,8 @@ export class Layout {
    * @param {number} y
    */
   entityAt(x, y) {
-    if (!this.inBounds(x, y)) return null;
+    // Fixed pieces may sit just off the grid (the cellar).
+    if (!this.inBounds(x, y)) return this.entities.find((e) => ENTITY_KINDS[e.kind]?.fixed && e.x === x && e.y === y) ?? null;
     return this._index().get(y * this.width + x) ?? null;
   }
 
@@ -295,20 +302,20 @@ export class Layout {
       if (!this.inBounds(c.x, c.y)) return { ok: false, reason: 'Outside the layout' };
       const front = fronts.get(c.y * this.width + c.x);
       if (front && live(front.dist) && !fitsFront(e, i, front.back)) {
-        return { ok: false, reason: `In front of ${describeEntity(front.dist)} only a belt or an underground's entry can go, not pointing into it` };
+        return { ok: false, reason: `In front of ${describeEntity(front.dist)} only a belt or an underground's belt cell can go, not pointing into it` };
       }
       const t = this.getTerrain(c.x, c.y);
       const occupant = live(this.entityAt(c.x, c.y));
       const gapOwner = live(this.gapAt(c.x, c.y));
       if (c.gap) {
         if (UNDERGROUND_GAP_MUST_BE_FLOOR && t !== FLOOR) return { ok: false, reason: 'Gap is off the factory floor' };
-        if (occupant && !UNDERGROUND_GAP_KINDS.includes(occupant.kind)) return { ok: false, reason: `Only a belt or chest can sit on the gap, not ${describeEntity(occupant)}` };
+        if (occupant && !UNDERGROUND_GAP_KINDS.includes(occupant.kind)) return { ok: false, reason: `Only a belt, chest or underground can sit on the gap, not ${describeEntity(occupant)}` };
         if (gapOwner) return { ok: false, reason: `Gap overlaps the gap of ${describeEntity(gapOwner)}` };
         continue;
       }
       if (t !== FLOOR && !ENTITY_KINDS[e.kind]?.fixed) return { ok: false, reason: 'Off the factory floor' };
       if (occupant) return { ok: false, reason: `Overlaps ${describeEntity(occupant)}` };
-      if (gapOwner && !UNDERGROUND_GAP_KINDS.includes(e.kind)) return { ok: false, reason: `Only a belt or chest can sit on the gap of ${describeEntity(gapOwner)}` };
+      if (gapOwner && !UNDERGROUND_GAP_KINDS.includes(e.kind)) return { ok: false, reason: `Only a belt, chest or underground can sit on the gap of ${describeEntity(gapOwner)}` };
     }
     return { ok: true };
   }
@@ -319,7 +326,7 @@ export class Layout {
   distributorFronts() {
     const out = new Map();
     for (const d of this.entities) {
-      if (d.kind !== 'distributor') continue;
+      if (!ENTITY_KINDS[d.kind]?.feeds) continue;
       const p = this.ports(d)[0];
       if (this.inBounds(p.nx, p.ny)) out.set(p.ny * this.width + p.nx, { dist: d, back: mod4(p.dir + 2) });
     }
@@ -379,6 +386,7 @@ export class Layout {
           .map((p) => port(p.kind, e.x + p.x, e.y + p.y, p.dir));
       case 'belt':
       case 'distributor':
+      case 'cellar':
         return [port('out', e.x, e.y, e.rot)];
       case 'supply_station':
         return [port('in', e.x, e.y, e.rot)];
@@ -403,9 +411,14 @@ export class Layout {
    */
   acceptsFrom(t, fx, fy) {
     if (t.kind === 'chest') return true;
-    if (t.kind === 'belt') {
-      const dir = DIRS.findIndex((d) => fx + d.dx === t.x && fy + d.dy === t.y);
-      return dir === t.rot || (BELT_ACCEPTS_FROM_SIDES && dir !== mod4(t.rot + 2));
+    // A belt, and each cell of an underground but its gap, takes items from
+    // behind and (merging) from the sides.
+    if (t.kind === 'belt' || t.kind === 'underground') {
+      return entityCells(t).some((c) => {
+        if (c.gap) return false;
+        const dir = DIRS.findIndex((d) => fx + d.dx === c.x && fy + d.dy === c.y);
+        return dir === t.rot || (dir !== -1 && BELT_ACCEPTS_FROM_SIDES && dir !== mod4(t.rot + 2));
+      });
     }
     return this.ports(t).some((p) => p.kind === 'in' && p.nx === fx && p.ny === fy);
   }
@@ -443,7 +456,10 @@ export class Layout {
     for (const e of this.entities) {
       for (const c of entityCells(e)) {
         const { x, y } = c;
-        if (!this.inBounds(x, y)) { add('error', e, `${describeEntity(e)} is outside the layout`); break; }
+        if (!this.inBounds(x, y)) {
+          if (!ENTITY_KINDS[e.kind]?.fixed) add('error', e, `${describeEntity(e)} is outside the layout`);
+          break;
+        }
         if (c.gap) {
           if (UNDERGROUND_GAP_MUST_BE_FLOOR && !this.isFloor(x, y)) add('error', e, `${describeEntity(e)}: gap is off the factory floor`, [[x, y]]);
           const crossing = this.entityAt(x, y);
@@ -458,6 +474,9 @@ export class Layout {
 
       if (ENTITY_KINDS[e.kind]?.hasMaterial && !ITEM_BY_ID[e.material]) {
         add('warning', e, `${describeEntity(e)} has no material set`);
+      }
+      if (e.kind === 'cellar') {
+        for (const id of e.stock) if (!CELLAR_ITEMS.includes(id)) add('error', e, `${describeEntity(e)} can't hold ${ITEM_BY_ID[id]?.name ?? `"${id}"`}`);
       }
       if (e.kind === 'chest') {
         if (!CHEST_LEVELS[e.level]) add('error', e, `${describeEntity(e)}: unknown chest level ${e.level}`);
@@ -497,7 +516,7 @@ export class Layout {
       for (const o of new Set([this.entityAt(x, y), this.gapAt(x, y)])) {
         if (!o) continue;
         const i = entityCells(o).findIndex((c) => c.x === x && c.y === y);
-        if (!fitsFront(o, i, back)) add('error', o, `${describeEntity(o)} can't be in front of ${describeEntity(dist)}: only a belt or an underground's entry can go there, not pointing into it`, [[x, y]]);
+        if (!fitsFront(o, i, back)) add('error', o, `${describeEntity(o)} can't be in front of ${describeEntity(dist)}: only a belt or an underground's belt cell can go there, not pointing into it`, [[x, y]]);
       }
     }
     const power = this.powerSupply();
@@ -616,16 +635,18 @@ function normalizeEntity(e) {
     delete e.rot;
   } else {
     e.rot ??= 0;
+    if (e.kind === 'cellar') e.stock ??= [];
   }
   return e;
 }
 
 // May cell `i` of entity `e` sit in front of a distributor? Only a belt or an
-// underground's entry cell, not pointing back into it (DISTRIBUTOR_FRONT_KINDS).
+// underground's belt cell (not its gap), not pointing back into it
+// (DISTRIBUTOR_FRONT_KINDS).
 /** @param {EntitySpec} e @param {number} i @param {Dir} back */
 function fitsFront(e, i, back) {
   if (!DISTRIBUTOR_FRONT_KINDS.includes(e.kind) || e.rot === back) return false;
-  return e.kind !== 'underground' || i === 0;
+  return !entityCells(e)[i].gap;
 }
 
 /**
@@ -736,7 +757,7 @@ export function describeEntity(e) {
     const roman = ['', 'I', 'II', 'III'][e.level] ?? e.level;
     return `${STATIONS[e.type]?.name ?? e.type} ${roman} at ${e.x},${e.y}`;
   }
-  const items = e.kind === 'chest' ? e.stock ?? [] : e.material ? [e.material] : [];
+  const items = e.kind === 'chest' || e.kind === 'cellar' ? e.stock ?? [] : e.material ? [e.material] : [];
   const mat = items.length ? ` (${items.map((id) => ITEM_BY_ID[id]?.name ?? id).join(', ')})` : '';
   return `${ENTITY_KINDS[e.kind]?.name ?? e.kind}${mat} at ${e.x},${e.y}`;
 }

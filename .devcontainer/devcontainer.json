@@ -1,0 +1,20 @@
+// Dev container: Node 22 for the tests and typecheck, python3 for `npm start`.
+// No Docker inside (no docker-in-docker or docker-outside-of-docker): the app
+// has no build step, so serve it with `npm start` rather than compose.yaml.
+{
+  "name": "graveyard-factory-optimizer",
+  // node:22-bookworm underneath, which includes python3 and git.
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  // Bind the project with ":z" so SELinux hosts (Fedora/RHEL) let the
+  // container read it, as in compose.yaml.
+  "workspaceMount": "",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "runArgs": ["--volume=${localWorkspaceFolder}:/workspaces/${localWorkspaceFolderBasename}:z"],
+  "remoteUser": "node",
+  // Fetch TypeScript once so the first `npm run typecheck` doesn't wait on it.
+  "postCreateCommand": "npx -y -p typescript@5 tsc --version",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": { "label": "Editor (npm start)", "onAutoForward": "openBrowser" }
+  }
+}

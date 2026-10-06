@@ -1,0 +1,120 @@
+# .msb/sandbox.toml — this project's sandbox policy. COMMIT THIS FILE.
+#
+# Read by msbctl (machines/vincent-pc/msb-manager/). It holds everything about
+# this project's sandbox that is true on any machine that clones the repo, and
+# nothing that is true only on one — no host paths, no tokens, no sandbox name.
+# Those live in ~/.config/msb/sandboxes/<name>.toml, which is not committed.
+#
+# Why this is not inside .msb/dev.yaml: that file is handed to msb with
+# --conf, and the keys below are ones msb only accepts as CLI flags. The split
+# is the same one ../README.md § "What lives where" describes.
+#
+# Egress rules in particular stay here rather than in dev.yaml's `network:`
+# block, whose nested YAML shape is unverified. An egress policy that is
+# silently wrong is the single failure this design cannot absorb, so the
+# manager emits verified --net-rule flags from this list instead.
+
+# ------------------------------------------------------------------- egress
+#
+# Named groups from ~/.config/msb/config.toml. `base` — DNS, the :80 deny,
+# the Anthropic endpoints and the Ubuntu mirrors — is always applied first and
+# listed. Order matters: rules are first-match-wins.
+#
+# Available: github, npm, bun, python, rust, go, homelab-lan,
+#            homelab-services, forgejo
+rule_groups = [
+    "claude",
+    "github",
+    "npm",
+]
+
+# Allow DNS answers that resolve to private (RFC1918) addresses.
+#
+# REQUIRED by the `homelab-services` group and anything else reached by a name
+# that points inside the LAN. This homelab publishes private addresses in
+# PUBLIC DNS — `git.vild.party` is a real public record pointing at
+# 192.168.2.6 — and msb drops such answers by default as DNS-rebind protection.
+#
+# The failure without it is badly disguised: the name comes back NXDOMAIN
+# inside the guest, and msb never learns which address belongs to the allowed
+# name, so it also refuses the TCP connection. It looks exactly like a missing
+# egress rule, and `curl --resolve` does not work around it either.
+#
+# What it costs: on ports other than :443 a hostname rule is enforced as "the
+# addresses this name resolved to", so shaped DNS answers could repoint such a
+# rule at an internal address. On :443 the SNI is checked and this does not
+# apply. Deny-by-default is unaffected either way — this widens what a name may
+# resolve to, never what is reachable without a rule.
+allow_private_dns = false
+
+# One-off hosts this project needs and no other does. Grammar:
+#
+#   "<action>[:<direction>]@<target>[:<proto>[:<ports>]]"
+#
+# Prefer HTTPS so the rule means what it says. Add entries from denials you
+# actually hit, not from guesses — the bootstrap reports every failure at once
+# so one round trip fixes all of them.
+#
+# These are emitted LAST, after `base` and after every group above. Rules are
+# first-match-wins, so nothing here can override a deny in `base` — in
+# particular a plaintext :80 allow belongs in config.toml, not here. Try the
+# https:// URL first; that is almost always the actual fix.
+extra_rules = []
+
+# ---------------------------------------------------------------- resources
+#
+# Omit any of these to take the default from config.toml (4 cpus, 8G memory,
+# 16G root disk). Memory is a ceiling, not a reservation.
+#
+# cpus      = 4
+# memory    = "8G"
+# root_disk = "16G"
+
+# -------------------------------------------------------------- environment
+#
+# Variables only THIS project needs. These MERGE over the machine-wide [env]
+# table in ~/.config/msb/config.toml rather than replacing it, so the telemetry
+# and feedback opt-outs stay in force and do not need repeating here.
+#
+# Do not set a key here that ./dev.yaml also sets in its `env:` block: which of
+# --env and --conf wins is unverified.
+#
+# Fixed at create time, like mounts and egress rules — `msbctl rebuild` to
+# change one.
+#
+# [env]
+# SOME_PROJECT_FLAG = "1"
+
+# ---------------------------------------------------------------- bootstrap
+[bootstrap]
+# Extra apt packages, on top of the always-installed set: socat, jq, curl,
+# ca-certificates, yamllint, shellcheck, python3-yaml.
+packages = []
+
+# bun is off by default — it is a feature of the old devcontainer that nothing
+# currently needs, and a failure fetching it must not stop gitleaks.
+bun = false
+gitleaks = false
+claude = true
+
+# Run after everything else, inside the guest, with the repo at /work. Use it
+# for `npm ci`-type project setup. Failures are reported, not fatal.
+# script = "scripts/sandbox-setup.sh"
+
+# ------------------------------------------------------------------ secrets
+[secrets]
+# Bind this project's fine-grained PAT as --secret GH_TOKEN@github.com,api.github.com.
+# The value is read from ~/.config/msb/secrets/<name>.env at every start and
+# never enters the guest: msb puts a placeholder in the environment and
+# substitutes the real value host-side, into request HEADERS only, on egress to
+# those two hosts.
+#
+# Consequence worth knowing: `curl -H "Authorization: Bearer $GH_TOKEN"` works.
+# So does `https://x:$GH_TOKEN@github.com/…`, which is NOT a counterexample —
+# curl converts userinfo into an Authorization header before sending. What is
+# genuinely outside the headers is a query string or a request body, and there
+# the placeholder is simply not substituted.
+#
+# `git push` is unaffected either way when origin is an SSH remote — that goes
+# through the forwarded agent, not through this binding.
+github = true

@@ -152,6 +152,7 @@ kbd {
 #status-msg.error { color: var(--error); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.checks { display: flex; flex-direction: column; gap: 2px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 2px 1px 6px; font-size: 12px; }
 .chip i { width: 9px; height: 9px; border-radius: 50%; border: 1px solid #0006; }
 .chip img { width: 18px; height: 18px; image-rendering: pixelated; }

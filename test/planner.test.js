@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Layout, VOID, REPAIRABLE_SECTIONS } from '../src/model.js';
 import { factoryFloor } from '../src/floor.js';
-import { N, E, S, RECIPES } from '../src/catalog.js';
+import { N, E, S, RECIPES, CELLAR_ITEMS } from '../src/catalog.js';
 import { planProduction, chooseRecipe } from '../src/planner/production.js';
 import { RouteGrid } from '../src/planner/router.js';
-import { Planner, stationInstances } from '../src/planner/planner.js';
+import { Planner, stationInstances, applyResult } from '../src/planner/planner.js';
 
 const byRecipe = (plan) => Object.fromEntries(plan.recipes.map((r) => [r.recipe, r]));
 // The station-count and planner tests run every recipe at 1 craft per minute so
@@ -89,6 +89,20 @@ test('router: crosses a belt line with an underground conveyor', () => {
   assert.equal(g.xy(ug.k)[0] + 2, 5, 'its gap sits on the belt line');
 });
 
+test('router: underground belt cells work like belts next to chests', () => {
+  const h = grid(8, 8);
+  // A neighbouring chest would feed them, so a route's underground avoids it.
+  h.addChestAt(h.key(2, 5));
+  assert.equal(h._undergroundOk(h.key(1, 4), E, new Set()), false);
+  assert.equal(h._undergroundOk(h.key(1, 3), E, new Set()), true);
+  // And an output chest can't go next to one, unless the exit points into it.
+  assert.equal(h.chestOk(h.key(2, 2), null, new Set()), true);
+  h.body[h.key(2, 3)] = E;
+  assert.equal(h.chestOk(h.key(2, 2), null, new Set()), false);
+  h.body[h.key(2, 3)] = N;
+  assert.equal(h.chestOk(h.key(2, 2), null, new Set()), true);
+});
+
 test('router: flags a route that runs into itself', () => {
   const g = grid(8, 8);
   // Hand-made path: a belt at (3,3), then an underground whose body covers (3,3).
@@ -133,16 +147,16 @@ function outLayoutPort(station) {
   return l.ports(station).find((p) => p.kind === 'out');
 }
 
-const distributorsOf = (l) => new Set(l.entities.filter((e) => e.kind === 'distributor').map((e) => e.material));
+const distributorsOf = (l) => new Set(l.entities.flatMap((e) => e.kind === 'distributor' ? [e.material] : e.kind === 'cellar' ? CELLAR_ITEMS : []));
 
-function runPlan(layout, targets, iterations, seed = 1) {
-  const prod = plan1(targets, { distributors: distributorsOf(layout) });
+function runPlan(layout, targets, iterations, seed = 1, options = {}) {
+  const prod = plan1(targets, { distributors: distributorsOf(layout), ...options });
   const pl = new Planner(layout, prod, { seed });
   pl.init();
   for (let i = 0; i < iterations; i += 50) pl.step(50, i / iterations);
   const res = pl.result();
   const out = layout.clone();
-  for (const e of res.entities) out.add(e);
+  applyResult(out, res);
   return { res, out, prod };
 }
 
@@ -180,6 +194,27 @@ test('planner: plans on the fully repaired floor validate', () => {
   const { res, out } = runs.find((r) => !r.res.failures.length) ?? runs[0];
   assert.deepEqual(res.failures, []);
   assert.deepEqual(layoutIssues(out), []);
+});
+
+test('planner: beer and wine come from the cellar, sorted by a filtered chest when there are several', () => {
+  const layout = factoryFloor(REPAIRABLE_SECTIONS);
+  const near = (out) => out.entities.filter((e) => e.planned && e.x <= 1 && e.y === 14);
+  // One item: the cellar holds just that and feeds its belt like a distributor.
+  const one = runPlan(layout, [{ item: 'supply_beer', rate: 1 }], 300);
+  assert.equal(one.prod.supply.beer.source, 'distributor');
+  assert.deepEqual(one.res.failures, []);
+  assert.deepEqual(one.res.cellarStock, ['beer']);
+  assert.deepEqual(one.out.entities.find((e) => e.kind === 'cellar').stock, ['beer']);
+  assert.deepEqual(near(one.out).map((e) => e.kind), ['belt', 'belt']);
+  assert.deepEqual(layoutIssues(one.out), []);
+  // Two: a belt into a chest at 1,14 that sends each out of its own side.
+  const two = runPlan(layout, [{ item: 'supply_beer', rate: 1 }, { item: 'supply_wine', rate: 1 }], 300, 1, { recipeChoice: { supply_wine: 'supply_wine_2' } });
+  assert.deepEqual(two.res.failures, []);
+  assert.deepEqual(two.res.cellarStock, ['beer', 'wine_2']);
+  const [belt, chest] = near(two.out).sort((a, z) => a.x - z.x);
+  assert.deepEqual([belt.kind, belt.rot, chest.kind], ['belt', E, 'chest']);
+  assert.deepEqual(Object.values(chest.filters).sort(), ['beer', 'wine_2']);
+  assert.deepEqual(layoutIssues(two.out), []);
 });
 
 test('planner: stationInstances splits fractional crafts over stations', () => {

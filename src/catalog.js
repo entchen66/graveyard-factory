@@ -19,7 +19,11 @@
 /** @typedef {import('./types.js').Bounds} Bounds */
 /** @typedef {import('./types.js').FloorSection} FloorSection */
 /** @typedef {[number, number]} Offset */
-/** fixed: part of the floor plan (in the wall, off the floor), never placed, moved or removed by hand. @typedef {{ name: string, rotatable?: boolean, hasMaterial?: boolean, fixed?: boolean }} EntityKindDef */
+/**
+ * fixed: part of the floor plan (in the wall, off the floor), never placed, moved or removed by hand.
+ * feeds: pushes items out of its `rot` side into the cell in front, like a chest open on that side only.
+ * @typedef {{ name: string, rotatable?: boolean, hasMaterial?: boolean, fixed?: boolean, feeds?: boolean }} EntityKindDef
+ */
 /** @typedef {{ name: string, icon: string }} TalentDef */
 /** @typedef {{ name: string, slots: number, art: string }} ChestLevel */
 
@@ -392,8 +396,10 @@ function hashColor(id) {
 // Entity kinds that can be placed on the floor.
 //   belt         1x1, moves items towards `rot`. Belts never cross.
 //   underground  1x5 from its entry cell (x, y) towards `rot`: 2 cells, a gap, 2 cells.
-//                Items enter from behind the entry cell and leave in front of the
-//                exit cell. Only a plain belt may occupy the gap.
+//                Items leave in front of the exit cell. The four cells around the
+//                gap work like belts: they take items from behind and from the
+//                sides (belts, chests, distributors). A belt, a chest or another
+//                underground's belt cell may sit on the gap.
 //   splitter     1x1, takes items from behind (travelling towards `rot`) and sends
 //                them out to both sides.
 //   chest        1x1, accepts items from any side (a distributor or a station's
@@ -403,6 +409,8 @@ function hashColor(id) {
 //                and it never feeds a station input directly. `filters` picks the item sent out of each side
 //                keyed N/E/S/W (unset = any); `stock` lists items the player provisions by hand.
 //   distributor  1x1 raw-material source, outputs towards `rot`.
+//   cellar       1x1 source of beer and wine (`stock`, chosen by the player),
+//                all mixed onto the one belt it feeds towards `rot`.
 //   supply_station 1x1 sink for "Supply: ..." crates (the game's Supply Station),
 //                taking items from the neighbouring cell on its `rot` side.
 //   station      3x3, fixed orientation; `variant` picks the port layout.
@@ -412,7 +420,8 @@ export const ENTITY_KINDS = {
   underground: { name: 'Underground conveyor', rotatable: true },
   splitter: { name: 'Conveyor splitter', rotatable: true },
   chest: { name: 'Chest' },
-  distributor: { name: 'Distribution station', rotatable: true, hasMaterial: true, fixed: true },
+  distributor: { name: 'Distribution station', rotatable: true, hasMaterial: true, fixed: true, feeds: true },
+  cellar: { name: 'Cellar', fixed: true, feeds: true },
   supply_station: { name: 'Supply station', rotatable: true },
   station: { name: 'Station' },
 };
@@ -527,9 +536,18 @@ export const FACTORY_DISTRIBUTORS = [
   { x: 23, y: 53, material: 'stone' },
   { x: 27, y: 53, material: 'wood_log' },
 ];
-// The cell a distributor feeds may stay empty, or hold a belt or the entry of
-// an underground conveyor, neither pointing back into the distributor; nothing
-// else (confirmed by the user).
+// The cellar (the game's `conveyor_wine_beer_pallet`): in the west wall, just
+// off the grid, feeding east into the one-cell nook at 0,14 of the North-west
+// section (confirmed by the user). It holds beer and wine of each quality, and
+// puts whatever it holds onto that belt, so more than one item needs a chest
+// with filters to sort them out.
+/** @type {{ x: number, y: number, rot: import('./types.js').Dir }} */
+export const FACTORY_CELLAR = { x: -1, y: 14, rot: E };
+export const CELLAR_ITEMS = ['beer', 'wine_1', 'wine_2', 'wine_3'];
+// The cell a distributor (or the cellar) feeds may stay empty, or hold a belt or one of an
+// underground conveyor's belt cells (not its gap), neither pointing back into
+// the distributor; nothing else (confirmed by the user). A distributor feeds it
+// like a chest with one side.
 /** @type {import('./types.js').EntityKind[]} */
 export const DISTRIBUTOR_FRONT_KINDS = ['belt', 'underground'];
 
@@ -538,9 +556,10 @@ export const BELT_ACCEPTS_FROM_SIDES = true;
 // Must the underground conveyor's gap cell be factory floor?
 export const UNDERGROUND_GAP_MUST_BE_FLOOR = true;
 // What may sit on an underground conveyor's gap cell (it runs below): a belt
-// crossing it, or a chest (confirmed by the user).
+// crossing it, a chest, or one of another underground's belt cells (never its
+// gap); confirmed by the user.
 /** @type {import('./types.js').EntityKind[]} */
-export const UNDERGROUND_GAP_KINDS = ['belt', 'chest'];
+export const UNDERGROUND_GAP_KINDS = ['belt', 'chest', 'underground'];
 export const UNDERGROUND_LENGTH = 5;
 export const UNDERGROUND_GAP = 2; // index of the gap cell along the conveyor
 

@@ -6,7 +6,7 @@
 // route costs (belts, turns, undergrounds, splitters, chests) plus a large
 // penalty per connection that could not be routed.
 
-import { STATIONS, RECIPE_BY_ID, DIRS, entityCells, stationVariants, isSupplyItem } from '../catalog.js';
+import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, entityCells, stationVariants, isSupplyItem } from '../catalog.js';
 import { RouteGrid, DX, DY, COST } from './router.js';
 import { powerOf, powerSupply } from '../model.js';
 
@@ -55,6 +55,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {number} [n] access cell
  * @property {number} [stub] cell held free straight out of the port (-1: none)
  * @property {number[]} [stubs] distributor stubs
+ * @property {boolean} [hub] the cellar's sorting chest: items leave from its sides
  * @property {number} [d] output direction
  * @property {number} [P] input port cell
  * @property {number} [into] direction of travel into an input port
@@ -76,6 +77,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {EntitySpec[]} entities
  * @property {Placement[]} placements
  * @property {Failure[]} failures
+ * @property {string[] | null} cellarStock what the cellar should hold for this plan (null: unused)
  * @property {number} score
  * @property {{ stations: number, belts: number, undergrounds: number, splitters: number, chests: number, supplyStations: number, power: number, available: number, over: number, zombies: number, connections: number, iterations: number }} stats
  */
@@ -137,6 +139,15 @@ export function stationInstances(production) {
   return out;
 }
 
+// Add a plan's pieces to `layout` (the base it was planned on) and fill the
+// cellar with what the plan takes from it.
+/** @param {Layout} layout @param {PlanResult} result */
+export function applyResult(layout, result) {
+  for (const e of result.entities) layout.add(e);
+  const cellar = layout.entities.find((e) => e.kind === 'cellar');
+  if (cellar && result.cellarStock) layout.update(cellar.id, { stock: [...result.cellarStock] });
+}
+
 // Mulberry32: small seeded PRNG so runs are reproducible.
 /**
  * @param {number} seed
@@ -181,8 +192,10 @@ export class Planner {
   _buildBase() {
     const l = this.layout;
     const g = new RouteGrid(l.width, l.height);
-    /** @type {Map<string, { k: number, d: number }>} distributor output access cell by material */
+    /** @type {Map<string, { k: number, d: number, hub?: boolean }>} distributor output access cell by material */
     this.distributors = new Map();
+    /** @type {{ k: number, d: number } | null} the cellar's output access cell */
+    let cellar = null;
     for (let y = 0; y < l.height; y++) for (let x = 0; x < l.width; x++) g.floor[g.key(x, y)] = l.isFloor(x, y) ? 1 : 0;
     for (const e of l.entities) {
       const cells = entityCells(e);
@@ -196,6 +209,7 @@ export class Planner {
         if (!l.inBounds(c.x, c.y)) continue;
         const k = g.key(c.x, c.y);
         if (c.gap) g.gap[k] = e.rot; else g.block(k);
+        if (e.kind === 'underground' && !c.gap) g.body[k] = e.rot;
       }
       // A chest outputs from its filtered sides, or from every side if it has none.
       if (e.kind === 'chest') {
@@ -207,12 +221,14 @@ export class Planner {
         if (!l.inBounds(p.nx, p.ny)) continue;
         const k = g.key(p.nx, p.ny);
         if (g.occ[k] === 0) g.reserved[k] = 0;
-        if (e.kind === 'distributor' && p.kind === 'out') {
-          this.distributors.set(e.material, { k, d: p.dir });
+        if (ENTITY_KINDS[e.kind].feeds && p.kind === 'out') {
+          if (e.kind === 'distributor') this.distributors.set(e.material, { k, d: p.dir });
+          else cellar = { k, d: p.dir };
           g.distFront[k] = rev(p.dir);
         }
       }
     }
+    this._useCellar(g, cellar);
     this.base = g;
     // Footprint positions free of obstacles, per station size.
     /** @type {Record<number, { x: number, y: number }[]>} */
@@ -229,6 +245,34 @@ export class Planner {
         }
       }
     }
+  }
+
+  // The cellar puts everything it holds onto one belt. With one item it's a
+  // distributor of that item; with more, a filtered chest one cell in sorts
+  // them out of its other three sides (so three items at most: any others
+  // come from supply chests). It holds just what the plan takes from it.
+  /** @param {RouteGrid} g @param {{ k: number, d: number } | null} out */
+  _useCellar(g, out) {
+    /** @type {{ belt: number, hub: number, d: number } | null} */
+    this.cellarHub = null;
+    /** @type {string[] | null} */
+    this.cellarStock = null;
+    const free = (/** @type {number} */ k) => k >= 0 && g.floor[k] && g.occ[k] === 0 && g.gap[k] === -1;
+    const items = Object.entries(this.production.supply)
+      .filter(([item, s]) => s.source === 'distributor' && CELLAR_ITEMS.includes(item))
+      .sort((a, z) => z[1].rate - a[1].rate).map(([item]) => item);
+    if (!out || !items.length || !free(out.k)) return;
+    if (items.length === 1) {
+      this.distributors.set(items[0], out);
+      this.cellarStock = items;
+      return;
+    }
+    const hub = g.step(out.k, out.d);
+    if (!free(hub) || g.reserved[hub] !== -1) return;
+    this.cellarHub = { belt: out.k, hub, d: out.d };
+    const sorted = items.slice(0, 3);
+    this.cellarStock = CELLAR_ITEMS.filter((item) => sorted.includes(item));
+    for (const item of this.cellarStock) this.distributors.set(item, { k: hub, d: out.d, hub: true });
   }
 
   // Cells in front of each distributor the plan uses, where no station may go:
@@ -450,7 +494,28 @@ export class Planner {
   _evaluate(placements) {
     const b = this.base;
     const g = new RouteGrid(b.W, b.H);
-    for (const f of /** @type {const} */ (['floor', 'occ', 'rot', 'gap', 'reserved', 'chestFeeds', 'distFront'])) g[f].set(b[f]);
+    for (const f of /** @type {const} */ (['floor', 'occ', 'rot', 'gap', 'body', 'reserved', 'chestFeeds', 'distFront'])) g[f].set(b[f]);
+
+    // The cellar's belt and sorting chest, with the chest's three outer sides
+    // kept free for its lines.
+    /** @type {number[]} */
+    const hubSides = [];
+    if (this.cellarHub) {
+      const { belt, hub, d } = this.cellarHub;
+      const [bx, by] = g.xy(belt), [hx, hy] = g.xy(hub);
+      g.occ[belt] = 2;
+      g.rot[belt] = d;
+      g.placed.set(belt, { kind: 'belt', x: bx, y: by, rot: d });
+      g.placed.set(hub, { kind: 'chest', x: hx, y: hy, stock: [], filters: {}, role: 'hub' });
+      g.addChestAt(hub, 0);
+      g.net.set(hub, { k: hub, kind: 'hub', next: [], prev: [], up: new Set(), down: new Set(), din: d });
+      for (const side of [d, (d + 1) % 4, (d + 3) % 4]) {
+        const k = g.step(hub, side);
+        if (k < 0 || !g.floor[k] || g.occ[k] !== 0 || g.reserved[k] !== -1) continue;
+        g.reserved[k] = 2;
+        hubSides.push(side);
+      }
+    }
 
     // Stations and their port access cells. Each port also holds the next cell
     // straight out (a "stub") until it is connected, so passing belts can't box
@@ -495,7 +560,7 @@ export class Planner {
     const distStub = new Map();
     for (const [item, sup] of Object.entries(supply)) {
       const dist = sup.source === 'distributor' && this.distributors.get(item);
-      if (!dist) continue;
+      if (!dist || dist.hub) continue;
       const a = stub(dist.k, dist.d);
       distStub.set(item, [a, a >= 0 ? stub(a, dist.d) : -1]);
     }
@@ -509,7 +574,7 @@ export class Planner {
       const sup = supply[sk.item];
       if (!sup) continue;
       const dist = sup.source === 'distributor' && this.distributors.get(sk.item);
-      if (dist) edges.push({ src: { id: `dist:${sk.item}`, n: dist.k, d: dist.d, stubs: distStub.get(sk.item) }, sink: sk, item: sk.item });
+      if (dist) edges.push({ src: { id: `dist:${sk.item}`, n: dist.k, d: dist.d, stubs: distStub.get(sk.item), hub: dist.hub }, sink: sk, item: sk.item });
       else edges.push({ src: { id: 'chest', chest: true }, sink: sk, item: sk.item });
     }
     /** @type {Map<string, { producers: Endpoint[], consumers: Endpoint[] }>} */
@@ -551,6 +616,10 @@ export class Planner {
       let starts;
       if (src.chest) {
         starts = g.chestStarts(item, sink.n, 6);
+      } else if (src.hub && !usedSrc.has(src.id)) {
+        // Out of a free side of the cellar's chest (filtered to this item when applied).
+        starts = hubSides.map((side) => ({ k: g.step(src.n, side), d: side, cost: 0, straight: true, origin: { type: 'existingHub', k: src.n } }));
+        for (const s of starts) allow.add(s.k);
       } else if (!usedSrc.has(src.id)) {
         // A station output facing left or right needs a belt: it can't push
         // straight into a chest (a top output can).
@@ -715,6 +784,7 @@ export class Planner {
       entities,
       placements,
       failures: r.failures,
+      cellarStock: this.cellarStock,
       score: r.score,
       stats: {
         stations: count('station'), belts: count('belt'), undergrounds: count('underground'),

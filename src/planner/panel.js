@@ -2,8 +2,9 @@
 // Planner side panel: targets, options, production summary, and running the
 // layout search with a live preview on the canvas.
 
-import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON, ZOMBIE_POWER } from '../catalog.js';
+import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON, ZOMBIE_POWER, CELLAR_ITEMS } from '../catalog.js';
 import { planProduction, recipesProducing } from './production.js';
+import { applyResult } from './planner.js';
 
 /** @typedef {import('../types.js').Item} Item */
 /** @typedef {import('../types.js').StationType} StationType */
@@ -63,7 +64,7 @@ export class PlannerPanel {
 
   production() {
     const s = this.settings;
-    const distributors = new Set(this.editor.layout.entities.filter((e) => e.kind === 'distributor').map((e) => e.material));
+    const distributors = new Set(this.editor.layout.entities.flatMap((e) => e.kind === 'distributor' ? [e.material] : e.kind === 'cellar' ? CELLAR_ITEMS : []));
     return planProduction(s.targets, { maxLevel: s.maxLevel, recipeChoice: s.recipeChoice, distributors });
   }
 
@@ -114,7 +115,7 @@ export class PlannerPanel {
 
   previewLayout() {
     const l = this.baseLayout();
-    for (const e of this.result.entities) l.add(e);
+    applyResult(l, this.result);
     return l;
   }
 
@@ -124,7 +125,7 @@ export class PlannerPanel {
     this.editor.setPreview(null);
     this.editor.mutate(() => {
       for (const e of this.editor.layout.entities.filter((x) => x.planned)) this.editor.layout.remove(e.id);
-      for (const e of entities) this.editor.layout.add(e);
+      applyResult(this.editor.layout, this.result);
     });
     this.editor.status(`Applied planner layout (${entities.length} pieces). Undo to go back.`);
     this.result = null;

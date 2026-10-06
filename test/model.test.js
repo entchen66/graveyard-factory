@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Layout, FLOOR, VOID, REPAIRABLE_SECTIONS } from '../src/model.js';
 import {
-  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, BELT_MASTER_ICON, POWER_ICON, FLOOR_SECTIONS, FLOOR_GRID, FACTORY_DISTRIBUTORS, stationVariants, extensionsFor, extensionArt,
+  N, E, S, W, RECIPES, ITEM_BY_ID, STATIONS, EXTENSIONS, CONVEYOR_ART, CHEST_LEVELS, TALENTS, BELT_MASTER_ICON, POWER_ICON, FLOOR_SECTIONS, FLOOR_GRID, FACTORY_DISTRIBUTORS, FACTORY_CELLAR, CELLAR_ITEMS, stationVariants, extensionsFor, extensionArt,
 } from '../src/catalog.js';
 import { factoryFloor, DEFAULT_REPAIRED } from '../src/floor.js';
 
@@ -34,9 +34,12 @@ test('underground conveyor: 1x5, crossable gap, ports at the ends', () => {
   assert.equal(l.entityAt(4, 4), null);
   assert.equal(l.gapAt(4, 4), u);
   assert.deepEqual(portsOf(l, u), ['in:1,4', 'out:7,4']);
-  // A belt or a chest may sit on the gap; nothing else may, and not on the rest.
+  // A belt, a chest or another underground's belt cell may sit on the gap;
+  // nothing else may, and not on the rest.
   assert.equal(l.canPlace({ kind: 'belt', x: 4, y: 4 }).ok, true);
   assert.equal(l.canPlace({ kind: 'chest', x: 4, y: 4 }).ok, true);
+  assert.equal(l.canPlace({ kind: 'underground', x: 4, y: 3, rot: S }).ok, true); // its cell 2 on the gap
+  assert.equal(l.canPlace({ kind: 'underground', x: 4, y: 2, rot: S }).ok, false); // gap on gap
   assert.equal(l.canPlace({ kind: 'splitter', x: 4, y: 4 }).ok, false);
   assert.equal(l.canPlace({ kind: 'belt', x: 3, y: 4 }).ok, false);
   assert.equal(l.canPlace({ kind: 'chest', x: 3, y: 4 }).ok, false);
@@ -47,9 +50,31 @@ test('underground conveyor: 1x5, crossable gap, ports at the ends', () => {
   // Overlapping existing pieces is rejected.
   assert.equal(l.canPlace({ kind: 'underground', x: 0, y: 0, rot: E }).ok, true);
   assert.equal(l.canPlace({ kind: 'underground', x: 4, y: 7, rot: N }).ok, false);
-  // Feeding the underground from the side warns.
+  // Its belt cells take a belt merging from the side, like a belt.
   l.add({ kind: 'belt', x: 3, y: 5, rot: N });
-  assert.ok(l.validate().some((i) => /Belt at 3,5 feeds Underground conveyor .* from a side with no input/.test(i.message)));
+  l.add({ kind: 'belt', x: 6, y: 3, rot: S });
+  assert.deepEqual(l.validate(), []);
+  assert.equal(l.acceptsFrom(u, 7, 4), false); // not from in front
+  assert.equal(l.acceptsFrom(u, 4, 3), false); // nor beside the gap
+  assert.equal(l.acceptsFrom(u, 2, 3), true);
+});
+
+test('undergrounds cross at the gap, both ways', () => {
+  const l = Layout.blank(10, 10);
+  const a = l.add({ kind: 'underground', x: 2, y: 4, rot: E }); // gap at 4,4
+  for (const [i, e] of [[0, { x: 4, y: 4, rot: N }], [1, { x: 4, y: 5, rot: N }], [3, { x: 4, y: 7, rot: N }], [4, { x: 4, y: 0, rot: S }]]) {
+    const b = /** @type {any} */ ({ kind: 'underground', ...e });
+    assert.equal(l.canPlace(b).ok, true, `cell ${i} on the gap`);
+    const placed = l.add(b);
+    assert.deepEqual(l.validate().filter((x) => x.severity === 'error'), []);
+    assert.equal(l.entityAt(4, 4), placed);
+    assert.equal(l.gapAt(4, 4), a);
+    l.remove(placed.id);
+  }
+  // And the other way round: its gap under the other's belt cell.
+  assert.equal(l.canPlace({ kind: 'underground', x: 3, y: 2, rot: S }).ok, true);
+  assert.equal(l.canPlace({ kind: 'underground', x: 2, y: 2, rot: S }).ok, true);
+  assert.equal(l.canPlace({ kind: 'underground', x: 4, y: 2, rot: S }).ok, false); // gaps clash
 });
 
 test('underground gap must be floor; off-floor cells under the body block placement', () => {
@@ -305,7 +330,7 @@ test('distribution stations are fixed in the wall, and follow the floor they fee
   assert.deepEqual(back.entities.map((e) => `${e.material}@${e.x},${e.y}`).sort(), FACTORY_DISTRIBUTORS.map((d) => `${d.material}@${d.x},${d.y}`).sort());
 });
 
-test('in front of a distributor: empty, a belt or an underground entry, not pointing back', () => {
+test('in front of a distributor: empty, a belt or an underground belt cell, not pointing back', () => {
   const l = factoryFloor();
   const front = { x: 11, y: 52 }; // coal distributor at 11,53
   const ok = (/** @type {any} */ e) => l.canPlace({ ...front, ...e }).ok;
@@ -314,17 +339,56 @@ test('in front of a distributor: empty, a belt or an underground entry, not poin
   assert.equal(ok({ kind: 'belt', rot: W }), true);
   assert.equal(ok({ kind: 'belt', rot: S }), false);       // back into the distributor
   assert.equal(ok({ kind: 'underground', rot: N }), true);  // entry there
-  assert.equal(ok({ kind: 'underground', rot: E }), false); // its exit would sit in front of the clay one at 15,53
-  assert.equal(l.canPlace({ kind: 'underground', x: 27, y: 52, rot: E }).ok, true); // the last one (wood) can go sideways
+  assert.equal(ok({ kind: 'underground', rot: E }), true);  // its exit sits in front of the clay one at 15,53
+  assert.equal(ok({ kind: 'underground', rot: W }), true);
+  assert.equal(ok({ kind: 'underground', rot: S }), false); // back into it
   assert.equal(ok({ kind: 'chest' }), false);
   assert.equal(ok({ kind: 'splitter', rot: N }), false);
   assert.equal(ok({ kind: 'supply_station', rot: N }), false);
   assert.equal(l.canPlace({ kind: 'station', type: 'smithy', level: 1, x: 10, y: 50 }).ok, false); // covers it
   assert.equal(l.canPlace({ kind: 'underground', x: 9, y: 52, rot: E }).ok, false); // gap over it
-  assert.equal(l.canPlace({ kind: 'underground', x: 10, y: 52, rot: E }).ok, false); // body over it
+  assert.equal(l.canPlace({ kind: 'underground', x: 10, y: 52, rot: E }).ok, true); // a belt cell over it
+  // The distributor feeds that cell like a chest feeds a belt.
+  const u = l.add({ kind: 'underground', x: 10, y: 52, rot: E });
+  assert.equal(l.acceptsFrom(u, 11, 53), true);
+  assert.deepEqual(l.validate().filter((i) => i.severity !== 'info'), []);
+  l.remove(u.id);
   // Validation catches what canPlace would refuse (e.g. from a file).
   l.add({ kind: 'chest', ...front });
   assert.match(l.validate().find((i) => i.severity === 'error').message, /Chest at 11,52 can't be in front of Distribution station \(Coal\) at 11,53/);
+});
+
+test('the cellar sits off the grid at -1,14, feeding 0,14, when the North-west section is repaired', () => {
+  const l = factoryFloor(DEFAULT_REPAIRED);
+  assert.ok(!DEFAULT_REPAIRED.includes(3));
+  assert.equal(l.entities.some((e) => e.kind === 'cellar'), false);
+  l.setRepaired([...DEFAULT_REPAIRED, 3]);
+  const cellar = l.entities.find((e) => e.kind === 'cellar');
+  assert.deepEqual({ x: cellar.x, y: cellar.y, rot: cellar.rot, stock: cellar.stock }, { ...FACTORY_CELLAR, stock: [] });
+  assert.equal(l.isFloor(0, 14), true);
+  assert.equal(l.entityAt(-1, 14), cellar);
+  assert.equal(l.entityAt(41, 13), null); // no wrap-around
+  assert.deepEqual(portsOf(l, cellar), ['out:0,14']);
+  // What it holds survives saving, loading and changing other sections.
+  l.update(cellar.id, { stock: ['beer', 'wine_2'] });
+  const back = Layout.fromJSON(l.toJSON());
+  back.setRepaired([3]);
+  assert.deepEqual(back.entities.find((e) => e.kind === 'cellar').stock, ['beer', 'wine_2']);
+  // Its front takes a belt or an underground's belt cell, like a distributor's.
+  assert.equal(l.canPlace({ kind: 'belt', x: 0, y: 14, rot: E }).ok, true);
+  assert.equal(l.canPlace({ kind: 'belt', x: 0, y: 14, rot: W }).ok, false);
+  assert.equal(l.canPlace({ kind: 'chest', x: 0, y: 14 }).ok, false);
+  const belt = l.add({ kind: 'belt', x: 0, y: 14, rot: E });
+  assert.equal(l.acceptsFrom(belt, -1, 14), true);
+  l.add({ kind: 'chest', x: 1, y: 14, filters: { N: 'beer', E: 'wine_2' } });
+  assert.deepEqual(l.validate().filter((i) => i.severity !== 'info'), []);
+  // Only beer and wine.
+  l.update(cellar.id, { stock: ['iron_ore'] });
+  assert.match(l.validate().find((i) => i.severity === 'error').message, /Cellar \(Iron ore\) at -1,14 can't hold Iron ore/);
+  assert.deepEqual(CELLAR_ITEMS.map((id) => ITEM_BY_ID[id].name), ['Beer', 'Wine ★', 'Wine ★★', 'Wine ★★★']);
+  // Gone again with its section.
+  l.setRepaired(DEFAULT_REPAIRED);
+  assert.equal(l.entities.some((e) => e.kind === 'cellar'), false);
 });
 
 test('extensions: one per slot, only for their station, and recipes need theirs', () => {
@@ -378,6 +442,11 @@ test('render order: conveyors first, then the rest, each top to bottom', async (
   const chestTop = { id: 5, kind: 'chest', x: 0, y: 0 };
   const chestLow = { id: 6, kind: 'chest', x: 0, y: 6 };
   assert.deepEqual(drawOrder([chestLow, below, st, beside, chestTop, above]).map((e) => e.id), [2, 3, 4, 5, 1, 6]);
+  // Conveyors on an underground's gap go over it.
+  const ug = { id: 7, kind: 'underground', x: 0, y: 0, rot: 2 }; // gap at 0,2
+  const cross = { id: 8, kind: 'belt', x: 0, y: 2, rot: 1 };
+  const crossUg = { id: 9, kind: 'underground', x: 0, y: 2, rot: 1 };
+  assert.deepEqual(drawOrder([cross, crossUg, ug]).map((e) => e.id), [7, 8, 9]);
 });
 
 test('a station side output needs a belt before a chest; a top output does not', () => {

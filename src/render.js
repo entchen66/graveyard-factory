@@ -87,6 +87,7 @@ const COLORS = {
   floorEdge: '#35d0ff',
   splitter: '#5d6f7e',
   underground: '#4d4a44',
+  cellar: '#7b2d3b',
   tunnel: '#a79f8d',
   chest: '#8b5e34',
   chestLid: '#a8743f',
@@ -347,6 +348,19 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
     ctx.lineWidth = Math.max(2, cell * 0.12);
     ctx.strokeRect(px + cell * 0.12, py + cell * 0.12, cell * 0.76, cell * 0.76);
     drawItem(ctx, e.material, px + cell / 2, py + cell / 2, cell * 0.66);
+  } else if (e.kind === 'cellar') {
+    ctx.fillStyle = '#2f3542';
+    ctx.fillRect(px + 1, py + 1, cell - 2, cell - 2);
+    ctx.strokeStyle = COLORS.cellar;
+    ctx.lineWidth = Math.max(2, cell * 0.12);
+    ctx.strokeRect(px + cell * 0.12, py + cell * 0.12, cell * 0.76, cell * 0.76);
+    // What it holds, up to four icons in a 2x2 grid.
+    const stock = e.stock ?? [];
+    stock.forEach((id, i) => {
+      const one = stock.length === 1, s = one ? cell * 0.66 : cell * 0.36;
+      const cx = one ? 0.5 : i % 2 ? 0.7 : 0.3, cy = one ? 0.5 : i < 2 ? 0.3 : 0.7;
+      drawItem(ctx, id, px + cell * cx, py + cell * cy, s);
+    });
   } else if (e.kind === 'station' && usesSprite(e)) {
     const def = STATIONS[e.type], sprite = spriteFor(e), img = SPRITES[sprite.src], size = def.size * cell;
     const sx = cell / UNIT_PX.w, sy = cell / UNIT_PX.h;
@@ -390,7 +404,7 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
 }
 
 // Stations show their ports with recipe icons instead (see drawStationIO).
-const KINDS_WITH_PORT_MARKERS = new Set(['distributor', 'splitter', 'underground']);
+const KINDS_WITH_PORT_MARKERS = new Set(['distributor', 'cellar', 'splitter', 'underground']);
 
 /** @param {Ctx} ctx @param {Entity} e @param {number} cell */
 function drawUnderground(ctx, e, cell) {
@@ -555,14 +569,18 @@ function usesSprite(e) {
 }
 
 // Painter's order: conveyors (belts, undergrounds, splitters) first as the
-// floor layer, then everything else on top. Within each layer by the
-// footprint's bottom row, then top row (taller pieces first), then left to right.
+// floor layer, those crossing an underground's gap over it, then everything
+// else on top. Within each layer by the footprint's bottom row, then top row
+// (taller pieces first), then left to right.
 const CONVEYOR_KINDS = new Set(['belt', 'underground', 'splitter']);
 /** @param {Entity[]} entities @returns {Entity[]} */
 export function drawOrder(entities) {
+  const gaps = new Set(entities.flatMap((e) => entityCells(e).filter((c) => c.gap).map((c) => `${c.x},${c.y}`)));
+  /** @param {Entity} e */
+  const onGap = (e) => entityCells(e).some((c) => !c.gap && gaps.has(`${c.x},${c.y}`));
   const key = new Map(entities.map((e) => {
     const b = entityBounds(e);
-    return [e, [CONVEYOR_KINDS.has(e.kind) ? 0 : 1, b.y + b.h, b.y, b.x]];
+    return [e, [CONVEYOR_KINDS.has(e.kind) ? (onGap(e) ? 0.5 : 0) : 1, b.y + b.h, b.y, b.x]];
   }));
   return [...entities].sort((a, b) => {
     const ka = key.get(a), kb = key.get(b);
@@ -603,7 +621,13 @@ function drawFlow(ctx, layout, cell) {
       }
     } else if (e.kind === 'underground') {
       const cells = entityCells(e), exit = cells[cells.length - 1];
-      segs.push([edge(e.x, e.y, (e.rot + 2) % 4), mid(e.x, e.y)]);
+      const sides = [e.rot, (e.rot + 1) % 4, (e.rot + 3) % 4];
+      for (const d of inputs(e.x, e.y, e.rot, sides)) segs.push([edge(e.x, e.y, (d + 2) % 4), mid(e.x, e.y)]);
+      // The other belt cells only show what feeds them.
+      for (const c of cells.slice(1)) {
+        if (c.gap) continue;
+        for (const d of sides) if (fedFromBehind(layout, c.x, c.y, d)) segs.push([edge(c.x, c.y, (d + 2) % 4), mid(c.x, c.y)]);
+      }
       dashed.push([mid(e.x, e.y), mid(exit.x, exit.y)]);
       segs.push([mid(exit.x, exit.y), edge(exit.x, exit.y, e.rot)]);
       heads.push([edge(exit.x, exit.y, e.rot), e.rot]);
@@ -724,15 +748,15 @@ function lineShape(fed, feeds) {
 }
 
 // Does something push into (x, y) from the cell behind it (travel direction d)?
-// A chest feeds every neighbouring belt that doesn't point into it, from its
-// filtered sides (every side if it has no filters).
+// A chest feeds every neighbouring belt (or underground belt cell) that doesn't
+// point into it, from its filtered sides (every side if it has no filters).
 /** @param {Layout} layout @param {number} x @param {number} y @param {number} d @returns {boolean} */
 function fedFromBehind(layout, x, y, d) {
   const bx = x - DIRS[d].dx, by = y - DIRS[d].dy;
   const src = layout.entityAt(bx, by);
   if (src?.kind === 'chest') {
     const filters = Object.keys(src.filters ?? {});
-    return layout.entityAt(x, y)?.kind === 'belt' && (!filters.length || filters.includes(DIRS[d].name));
+    return ['belt', 'underground'].includes(layout.entityAt(x, y)?.kind) && (!filters.length || filters.includes(DIRS[d].name));
   }
   return !!src && layout.ports(src).some((p) => p.kind === 'out' && p.x === bx && p.y === by && p.nx === x && p.ny === y);
 }

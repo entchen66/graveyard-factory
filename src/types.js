@@ -8,7 +8,7 @@
 
 /** Terrain cell: '.' floor, ' ' outside. @typedef {string} Terrain */
 
-/** @typedef {'belt' | 'underground' | 'splitter' | 'chest' | 'distributor' | 'station' | 'supply_station'} EntityKind */
+/** @typedef {'belt' | 'underground' | 'splitter' | 'chest' | 'distributor' | 'cellar' | 'station' | 'supply_station'} EntityKind */
 /** @typedef {'assembly_bench' | 'smithy' | 'kitchen'} StationType */
 
 /**
@@ -21,7 +21,7 @@
  * @property {number} y
  * @property {boolean} [locked] the planner must keep it
  * @property {boolean} [planned] placed by the planner
- * @property {number} [rot] belts, undergrounds, splitters: travel direction; distributors: output side; supply stations: input side
+ * @property {number} [rot] belts, undergrounds, splitters: travel direction; distributors and the cellar: output side; supply stations: input side
  * @property {string} [material] distributor: raw material id
  * @property {StationType} [type] station
  * @property {number} [level] station level, or chest level (1 | 2)
@@ -29,7 +29,7 @@
  * @property {string | null} [recipe] station recipe id
  * @property {string[]} [extensions] station: fitted extension ids (one per slot)
  * @property {(string | null)[]} [inputs] planned station: item taken by each input port
- * @property {string[]} [stock] chest: items provisioned by hand
+ * @property {string[]} [stock] chest: items provisioned by hand; cellar: the beer and wine it holds
  * @property {Partial<Record<SideName, string>>} [filters] chest: item sent out of each side
  * @property {'supply' | 'output' | 'hub'} [role] planned chest
  */
@@ -108,7 +108,7 @@
  * @property {Partial<Record<StationType, number>>} [maxLevel] best level the player has per station type
  * @property {Record<string, string>} [recipeChoice] item id -> recipe id
  * @property {Record<string, number>} [craftsPerMinute] recipe id -> crafts per minute per station
- * @property {Set<string>} [distributors] raw materials with a distribution station
+ * @property {Set<string>} [distributors] items with a distribution station or the cellar (default: every raw material)
  */
 
 /**

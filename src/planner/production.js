@@ -64,8 +64,8 @@ export function chooseRecipe(item, options = {}) {
 }
 
 // targets: [{ item, rate }] in items per minute.
-// options: { maxLevel, recipeChoice, craftsPerMinute, distributors: Set of raw
-//            materials that have a distribution station in the layout }
+// options: { maxLevel, recipeChoice, craftsPerMinute, distributors: Set of
+//            items with a distribution station or the cellar in the layout }
 /**
  * @param {Target[]} targets
  * @param {ProductionOptions} [options]
@@ -129,14 +129,15 @@ export function planProduction(targets, options = {}) {
   }
 
   // Everything without a recipe is supplied: raw materials from distribution
-  // stations when the layout has one, the rest from hand-stocked chests.
+  // stations and beer and wine from the cellar when the layout has them (or
+  // every raw material, if not given), the rest from hand-stocked chests.
   /** @type {ProductionPlan['supply']} */
   const supply = {};
   for (const item of order) {
     if (recipeOf.get(item)) continue;
     const rate = demand.get(item) ?? 0;
     if (rate <= EPS) continue;
-    const source = RAW.has(item) && (options.distributors?.has(item) ?? true) ? 'distributor' : 'chest';
+    const source = (options.distributors ? options.distributors.has(item) : RAW.has(item)) ? 'distributor' : 'chest';
     supply[item] = { rate, source };
   }
 

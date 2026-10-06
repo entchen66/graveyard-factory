@@ -3,7 +3,7 @@
 
 import {
   DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
-  ITEM_BY_ID, ENTITY_KINDS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, ZOMBIE_POWER, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
+  ITEM_BY_ID, ENTITY_KINDS, CELLAR_ITEMS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, ZOMBIE_POWER, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
 } from './catalog.js';
 import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
 import { drawLayout, loadArt } from './render.js';
@@ -208,7 +208,9 @@ export class Editor {
 
   fit() {
     const w = this.canvas.width / this.view.dpr, h = this.canvas.height / this.view.dpr;
-    const cell = Math.floor(Math.min((w - 40) / this.layout.width, (h - 40) / this.layout.height));
+    // A cell to spare each side when a fixed piece sits just off the grid (the cellar).
+    const pad = this.layout.entities.some((e) => e.x < 0) ? 2 : 0;
+    const cell = Math.floor(Math.min((w - 40) / (this.layout.width + pad), (h - 40) / this.layout.height));
     this.view.cell = clamp(cell, MIN_CELL, 48);
     this.view.ox = Math.round((w - this.layout.width * this.view.cell) / 2);
     this.view.oy = Math.round((h - this.layout.height * this.view.cell) / 2);
@@ -706,7 +708,19 @@ export class Editor {
     el.append(field('Position', h('span', {}, `${e.x}, ${e.y}${b.w * b.h > 1 ? ` (${b.w}×${b.h})` : ''}`)));
     if (ENTITY_KINDS[e.kind].fixed) {
       if (e.material) el.append(field('Material', h('span', {}, ITEM_BY_ID[e.material]?.name ?? e.material)));
-      el.append(h('p', { class: 'hint' }, 'Part of the factory: it can\'t be moved, turned or removed. The cell it feeds can stay empty or take a belt or an underground\'s entry, not pointing back into it.'));
+      if (e.kind === 'cellar') {
+        const boxes = CELLAR_ITEMS.map((id) => {
+          const box = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox' }));
+          box.checked = e.stock.includes(id);
+          box.addEventListener('change', () => this.mutate(() => this.layout.update(e.id, {
+            stock: CELLAR_ITEMS.filter((x) => x === id ? box.checked : e.stock.includes(x)),
+          })));
+          return h('label', {}, box, ` ${ITEM_BY_ID[id]?.name ?? id}`);
+        });
+        el.append(field('Holds', h('div', { class: 'checks' }, ...boxes)));
+        el.append(h('p', { class: 'hint' }, 'Everything it holds goes onto the one belt it feeds, mixed: with more than one item, sort them with a filtered chest.'));
+      }
+      el.append(h('p', { class: 'hint' }, 'Part of the factory: it can\'t be moved, turned or removed. The cell it feeds can stay empty or take a belt or an underground\'s belt cell (not its gap), not pointing back into it.'));
       return;
     }
     if (e.kind === 'station') {
@@ -791,7 +805,7 @@ export class Editor {
       ['Undergrounds / splitters', `${byKind('underground')} / ${byKind('splitter')}`],
       ...Object.entries(STATIONS).map(/** @returns {[string, number]} */ ([id, s]) => [s.name, l.entities.filter((e) => e.kind === 'station' && e.type === id).length]),
       ['Chests', byKind('chest')],
-      ['Distributors', byKind('distributor')],
+      ['Distributors', byKind('distributor') + byKind('cellar')],
     ];
     const p = l.powerSupply();
     const beltMaster = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox' }));
@@ -883,7 +897,7 @@ const ROT_LABEL = { belt: 'Direction', underground: 'Direction', splitter: 'Dire
 /** @type {Record<string, string>} */
 const TOOL_HINT = {
   belt: 'Drag to lay a belt line — direction follows the drag. Belts cannot cross; use an underground conveyor.',
-  underground: 'Click the entry cell; it runs 5 cells in its direction. A belt may cross its middle (gap) cell.',
+  underground: 'Click the entry cell; it runs 5 cells in its direction. A belt, chest or another underground may cross its middle (gap) cell; the other four cells work like belts.',
   splitter: 'Takes items from behind and sends them out to both sides.',
   station: 'Stations cannot rotate. R cycles through the four input/output layouts.',
   chest: 'Accepts from any side, outputs to neighbouring belts not pointing in. Filters pick the sides that output.',
