@@ -261,3 +261,19 @@ test('planner: a product another station takes several of per craft goes through
   for (const p of top) assert.equal(out.entityAt(p.nx, p.ny)?.kind, 'chest', `buffer chest at ${p.nx},${p.ny}`);
   assert.deepEqual(layoutIssues(out), []);
 });
+
+test('planner: garden distributors with no crop are set to the crops the plan needs', () => {
+  const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  layout.setRepaired([...layout.repaired, 1]);
+  const gardens = layout.entities.filter((e) => e.garden);
+  layout.update(gardens[0].id, { material: 'onion_1' }); // set by the player: kept
+  const { res, out, prod } = runPlan(layout, [{ item: 'supply_flour', rate: 1 }], 300, 1, { distributors: new Set(['wheat']) });
+  assert.equal(prod.supply.wheat.source, 'distributor');
+  assert.deepEqual(res.gardenStock.map(([, item]) => item), ['wheat']);
+  assert.ok(!res.gardenStock.some(([id]) => id === gardens[0].id));
+  assert.equal(out.entities.filter((e) => e.garden).filter((e) => e.material === 'wheat' && e.autoMaterial).length, 1);
+  assert.equal(out.entities.find((e) => e.id === gardens[0].id).material, 'onion_1');
+  assert.deepEqual(layoutIssues(out), []);
+  out.clearAutoMaterials();
+  assert.deepEqual(out.entities.filter((e) => e.garden).map((e) => e.material), ['onion_1', '', '']);
+});

@@ -29,7 +29,7 @@
 
 import {
   N, DIRS, STATIONS, ITEMS, ITEM_BY_ID, ROMAN, RECIPE_BY_ID, TALENTS, UNIT_PX, EXTENSION_ART_FRAME, extensionArt, entityBounds, entityCells,
-  ART_DIRS, CONVEYOR_ART, CHEST_LEVELS, CHEST_ART_OFFSET, FLOOR_SECTIONS,
+  ART_DIRS, CONVEYOR_ART, CHEST_LEVELS, CHEST_ART_OFFSET, FLOOR_SECTIONS, GARDEN_ITEMS, GARDEN_PICKER,
 } from './catalog.js';
 
 /** @type {Record<string, HTMLImageElement>} */
@@ -104,6 +104,26 @@ const COLORS = {
   lockedText: 'rgba(245,190,90,0.85)',
 };
 
+// The crops a garden distributor can be set to, floating above the top wall. The one
+// the selected garden distributor holds is outlined.
+/** @param {Ctx} ctx @param {Layout} layout @param {number} cell @param {number | null | undefined} selectedId */
+function drawGardenPicker(ctx, layout, cell, selectedId) {
+  const sel = selectedId != null ? layout.getEntity(selectedId) : null;
+  const active = sel?.garden ? sel : null;
+  GARDEN_ITEMS.forEach((id, i) => {
+    const px = (GARDEN_PICKER.x + i) * cell, py = GARDEN_PICKER.y * cell;
+    ctx.fillStyle = active ? 'rgba(30,33,41,0.92)' : 'rgba(30,33,41,0.6)';
+    roundRect(ctx, px + cell * 0.06, py + cell * 0.06, cell * 0.88, cell * 0.88, cell * 0.15);
+    ctx.fill();
+    if (active?.material === id) {
+      ctx.strokeStyle = COLORS.select;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    drawItem(ctx, id, px + cell / 2, py + cell / 2, cell * 0.66);
+  });
+}
+
 /** @param {Ctx} ctx @param {Layout} layout @param {View} view @param {Overlay} [overlay] */
 export function drawLayout(ctx, layout, view, overlay = {}) {
   const { cell } = view;
@@ -165,6 +185,8 @@ export function drawLayout(ctx, layout, view, overlay = {}) {
       for (const [x, y] of issue.cells) ctx.strokeRect(x * cell + 2, y * cell + 2, cell - 4, cell - 4);
     }
   }
+
+  if (layout.entities.some((e) => e.garden)) drawGardenPicker(ctx, layout, cell, overlay.selectedId);
 
   if (overlay.selectedId != null) {
     const e = layout.getEntity(overlay.selectedId);
@@ -350,7 +372,7 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
     ctx.strokeStyle = ITEM_BY_ID[e.material]?.color ?? '#999';
     ctx.lineWidth = Math.max(2, cell * 0.12);
     ctx.strokeRect(px + cell * 0.12, py + cell * 0.12, cell * 0.76, cell * 0.76);
-    drawItem(ctx, e.material, px + cell / 2, py + cell / 2, cell * 0.66);
+    if (e.material) drawItem(ctx, e.material, px + cell / 2, py + cell / 2, cell * 0.66);
   } else if (e.kind === 'cellar') {
     ctx.fillStyle = '#2f3542';
     ctx.fillRect(px + 1, py + 1, cell - 2, cell - 2);

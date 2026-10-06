@@ -538,6 +538,18 @@ export const FACTORY_DISTRIBUTORS = [
   { x: 23, y: 53, material: 'stone' },
   { x: 27, y: 53, material: 'wood_log' },
 ];
+// Three garden distributors in the top wall, one row above the floor, each feeding
+// south into the floor's top row. Each is set by the player to one of the garden's
+// crops (`GARDEN_ITEMS`); the planner sets the ones left empty. They can't be built or
+// moved either. `GARDEN_PICKER` is where the strip of crop icons to pick from floats.
+/** @type {{ x: number, y: number, rot: import('./types.js').Dir }[]} */
+export const FACTORY_GARDEN_DISTRIBUTORS = [
+  { x: 1, y: -1, rot: S },
+  { x: 3, y: -1, rot: S },
+  { x: 5, y: -1, rot: S },
+];
+export const GARDEN_ITEMS = ['wheat', 'carrot', 'beet', 'onion_1', 'onion_2', 'onion_3', 'pumpkin_1', 'pumpkin_2', 'pumpkin_3', 'cabbage_1', 'cabbage_2', 'cabbage_3'];
+export const GARDEN_PICKER = { x: 1, y: -2 };
 // The cellar (the game's `conveyor_wine_beer_pallet`): in the west wall, just
 // off the grid, feeding east into the one-cell nook at 0,14 of the North-west
 // section (confirmed by the user). It holds beer and wine of each quality, and

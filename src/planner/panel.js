@@ -2,7 +2,7 @@
 // Planner side panel: targets, options, production summary, and running the
 // layout search with a live preview on the canvas.
 
-import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON, ZOMBIE_POWER, CELLAR_ITEMS } from '../catalog.js';
+import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON, ZOMBIE_POWER, CELLAR_ITEMS, GARDEN_ITEMS } from '../catalog.js';
 import { planProduction, recipesProducing } from './production.js';
 import { applyResult } from './planner.js';
 
@@ -59,12 +59,14 @@ export class PlannerPanel {
   baseLayout() {
     const base = this.editor.layout.clone();
     for (const e of base.entities.filter((x) => x.planned)) base.remove(e.id);
+    base.clearAutoMaterials();
     return base;
   }
 
   production() {
     const s = this.settings;
-    const distributors = new Set(this.editor.layout.entities.flatMap((e) => e.kind === 'distributor' ? [e.material] : e.kind === 'cellar' ? CELLAR_ITEMS : []));
+    // A garden distributor with no crop (or one the planner set last time) can take any of them.
+    const distributors = new Set(this.editor.layout.entities.flatMap((e) => e.garden && (!e.material || e.autoMaterial) ? GARDEN_ITEMS : e.kind === 'distributor' ? [e.material] : e.kind === 'cellar' ? CELLAR_ITEMS : []));
     return planProduction(s.targets, { maxLevel: s.maxLevel, recipeChoice: s.recipeChoice, distributors });
   }
 
@@ -125,6 +127,7 @@ export class PlannerPanel {
     this.editor.setPreview(null);
     this.editor.mutate(() => {
       for (const e of this.editor.layout.entities.filter((x) => x.planned)) this.editor.layout.remove(e.id);
+      this.editor.layout.clearAutoMaterials();
       applyResult(this.editor.layout, this.result);
     });
     this.editor.status(`Applied planner layout (${entities.length} pieces). Undo to go back.`);

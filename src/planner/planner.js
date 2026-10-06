@@ -6,7 +6,7 @@
 // route costs (belts, turns, undergrounds, splitters, chests) plus a large
 // penalty per connection that could not be routed.
 
-import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, entityCells, stationVariants, isSupplyItem, SUPPLY_TARGET } from '../catalog.js';
+import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, GARDEN_ITEMS, entityCells, stationVariants, isSupplyItem, SUPPLY_TARGET } from '../catalog.js';
 import { RouteGrid, DX, DY, COST } from './router.js';
 import { powerOf, powerSupply } from '../model.js';
 
@@ -79,6 +79,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {Placement[]} placements
  * @property {Failure[]} failures
  * @property {string[] | null} cellarStock what the cellar should hold for this plan (null: unused)
+ * @property {[number, string][]} gardenStock crop for each garden distributor the plan sets (entity id, item)
  * @property {number} score
  * @property {{ stations: number, belts: number, undergrounds: number, splitters: number, chests: number, supplyStations: number, power: number, available: number, over: number, zombies: number, connections: number, iterations: number }} stats
  */
@@ -149,6 +150,7 @@ export function applyResult(layout, result) {
   for (const e of result.entities) layout.add(e);
   const cellar = layout.entities.find((e) => e.kind === 'cellar');
   if (cellar && result.cellarStock) layout.update(cellar.id, { stock: [...result.cellarStock] });
+  for (const [id, material] of result.gardenStock) layout.update(id, { material, autoMaterial: true });
 }
 
 // Mulberry32: small seeded PRNG so runs are reproducible.
@@ -199,6 +201,8 @@ export class Planner {
     this.distributors = new Map();
     /** @type {{ k: number, d: number } | null} the cellar's output access cell */
     let cellar = null;
+    /** @type {{ id: number, k: number, d: number }[]} garden distributors with no crop set */
+    const freeGarden = [];
     for (let y = 0; y < l.height; y++) for (let x = 0; x < l.width; x++) g.floor[g.key(x, y)] = l.isFloor(x, y) ? 1 : 0;
     for (const e of l.entities) {
       const cells = entityCells(e);
@@ -225,13 +229,15 @@ export class Planner {
         const k = g.key(p.nx, p.ny);
         if (g.occ[k] === 0) g.reserved[k] = 0;
         if (ENTITY_KINDS[e.kind].feeds && p.kind === 'out') {
-          if (e.kind === 'distributor') this.distributors.set(e.material, { k, d: p.dir });
+          if (e.kind === 'distributor' && e.garden && !e.material) freeGarden.push({ id: e.id, k, d: p.dir });
+          else if (e.kind === 'distributor') this.distributors.set(e.material, { k, d: p.dir });
           else cellar = { k, d: p.dir };
           g.distFront[k] = rev(p.dir);
         }
       }
     }
     this._useCellar(g, cellar);
+    this._useGarden(g, freeGarden);
     this.base = g;
     // Footprint positions free of obstacles, per station size.
     /** @type {Record<number, { x: number, y: number }[]>} */
@@ -276,6 +282,22 @@ export class Planner {
     const sorted = items.slice(0, 3);
     this.cellarStock = CELLAR_ITEMS.filter((item) => sorted.includes(item));
     for (const item of this.cellarStock) this.distributors.set(item, { k: hub, d: out.d, hub: true });
+  }
+
+  // Garden distributors with no crop set take the crops the plan needs most; any it
+  // has no distributor left for come from supply chests.
+  /** @param {RouteGrid} g @param {{ id: number, k: number, d: number }[]} free */
+  _useGarden(g, free) {
+    /** @type {[number, string][]} */
+    this.gardenStock = [];
+    const items = Object.entries(this.production.supply)
+      .filter(([item, s]) => s.source === 'distributor' && GARDEN_ITEMS.includes(item) && !this.distributors.has(item))
+      .sort((a, z) => z[1].rate - a[1].rate).map(([item]) => item);
+    free.forEach((d, i) => {
+      if (i >= items.length || !g.floor[d.k] || g.occ[d.k] !== 0) return;
+      this.distributors.set(items[i], { k: d.k, d: d.d });
+      this.gardenStock.push([d.id, items[i]]);
+    });
   }
 
   // Cells in front of each distributor the plan uses, where no station may go:
@@ -791,6 +813,7 @@ export class Planner {
       placements,
       failures: r.failures,
       cellarStock: this.cellarStock,
+      gardenStock: this.gardenStock,
       score: r.score,
       stats: {
         stations: count('station'), belts: count('belt'), undergrounds: count('underground'),

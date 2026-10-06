@@ -4,7 +4,7 @@
 
 import {
   DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
-  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor, isSupplyItem,
+  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_GARDEN_DISTRIBUTORS, GARDEN_ITEMS, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor, isSupplyItem,
 } from './catalog.js';
 
 /** @typedef {import('./types.js').Dir} Dir */
@@ -221,8 +221,14 @@ export class Layout {
     const isCellar = (/** @type {EntitySpec} */ e) => e.x === c.x && e.y === c.y && e.rot === c.rot;
     this.entities = this.entities.filter((e) => e.kind !== 'cellar' || (cellarOn && isCellar(e)));
     if (cellarOn && !this.entities.some((e) => e.kind === 'cellar')) this.add({ kind: 'cellar', ...c, stock: [], locked: true });
-    const want = FACTORY_DISTRIBUTORS.filter((d) => this.isFloor(d.x, d.y - 1));
-    const same = (/** @type {EntitySpec} */ e, /** @type {typeof want[number]} */ d) => e.x === d.x && e.y === d.y && e.material === d.material && e.rot === 0;
+    /** @type {{ x: number, y: number, rot: number, material: string, garden?: boolean }[]} */
+    const want = [
+      ...FACTORY_DISTRIBUTORS.map((d) => ({ ...d, rot: 0 })),
+      ...FACTORY_GARDEN_DISTRIBUTORS.map((d) => ({ ...d, garden: true, material: '' })),
+    ].filter((d) => this.isFloor(d.x + DIRS[d.rot].dx, d.y + DIRS[d.rot].dy));
+    // A garden distributor keeps the crop it's set to.
+    const same = (/** @type {EntitySpec} */ e, /** @type {typeof want[number]} */ d) =>
+      e.x === d.x && e.y === d.y && e.rot === d.rot && !!e.garden === !!d.garden && (d.garden || e.material === d.material);
     this.entities = this.entities.filter((e) => e.kind !== 'distributor' || want.some((d) => same(e, d)));
     for (const d of want) {
       if (!this.entities.some((e) => e.kind === 'distributor' && same(e, d))) this.add({ kind: 'distributor', rot: 0, locked: true, ...d });
@@ -479,6 +485,11 @@ export class Layout {
     return { belts: [...belts.values()], chests: [...chests] };
   }
 
+  // Garden distributors the planner set go back to unset, ready for a new plan.
+  clearAutoMaterials() {
+    for (const e of this.entities) if (e.garden && e.autoMaterial) { e.material = ''; delete e.autoMaterial; }
+  }
+
   /** @returns {Issue[]} */
   validate() {
     /** @type {Issue[]} */
@@ -513,7 +524,9 @@ export class Layout {
         seen.set(k, e);
       }
 
-      if (ENTITY_KINDS[e.kind]?.hasMaterial && !ITEM_BY_ID[e.material]) {
+      if (e.garden) {
+        if (e.material && !GARDEN_ITEMS.includes(e.material)) add('error', e, `${describeEntity(e)} can't hold ${ITEM_BY_ID[e.material]?.name ?? `"${e.material}"`}`);
+      } else if (ENTITY_KINDS[e.kind]?.hasMaterial && !ITEM_BY_ID[e.material]) {
         add('warning', e, `${describeEntity(e)} has no material set`);
       }
       if (e.kind === 'cellar') {

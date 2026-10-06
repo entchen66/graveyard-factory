@@ -512,3 +512,23 @@ test('a chest at the end of a belt carrying a Supply item is an error and its be
   assert.deepEqual(flow.chests.map((c) => c.id), [chest.id]);
   assert.ok(l.validate().some((i) => i.severity === 'error' && i.entityId === chest.id));
 });
+
+test('garden distributors: 1,-1 3,-1 5,-1 feed 1,0 3,0 5,0 once section 1 is repaired, and keep their crop', () => {
+  const l = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  const gardens = () => l.entities.filter((e) => e.garden);
+  assert.equal(gardens().length, 0);
+  l.setRepaired([...l.repaired, 1]);
+  assert.deepEqual(gardens().map((e) => [e.x, e.y, e.rot, e.material]), [[1, -1, S, ''], [3, -1, S, ''], [5, -1, S, '']]);
+  assert.deepEqual(gardens().map((e) => portsOf(l, e)), [['out:1,0'], ['out:3,0'], ['out:5,0']]);
+  assert.equal(l.entityAt(3, -1).kind, 'distributor');
+  assert.deepEqual(l.validate().filter((i) => i.severity !== 'info' && /distributor/i.test(i.message)), []);
+  l.update(gardens()[1].id, { material: 'onion_2' });
+  const again = Layout.fromJSON(JSON.stringify(l.toJSON()));
+  assert.deepEqual(again.entities.filter((e) => e.garden).map((e) => e.material), ['', 'onion_2', '']);
+  again.setRepaired(again.repaired);
+  assert.equal(again.entities.filter((e) => e.garden)[1].material, 'onion_2');
+  again.update(again.entities.find((e) => e.garden).id, { material: 'iron_ore' });
+  assert.ok(again.validate().some((i) => i.severity === 'error' && /can't hold/.test(i.message)));
+  again.setRepaired(again.repaired.filter((id) => id !== 1));
+  assert.equal(again.entities.filter((e) => e.garden).length, 0);
+});

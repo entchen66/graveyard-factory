@@ -3,7 +3,7 @@
 
 import {
   DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
-  ITEM_BY_ID, ENTITY_KINDS, CELLAR_ITEMS, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, ZOMBIE_POWER, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
+  ITEM_BY_ID, ENTITY_KINDS, CELLAR_ITEMS, GARDEN_ITEMS, GARDEN_PICKER, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, ZOMBIE_POWER, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
 } from './catalog.js';
 import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
 import { drawLayout, loadArt } from './render.js';
@@ -210,10 +210,12 @@ export class Editor {
     const w = this.canvas.width / this.view.dpr, h = this.canvas.height / this.view.dpr;
     // A cell to spare each side when a fixed piece sits just off the grid (the cellar).
     const pad = this.layout.entities.some((e) => e.x < 0) ? 2 : 0;
-    const cell = Math.floor(Math.min((w - 40) / (this.layout.width + pad), (h - 40) / this.layout.height));
+    // Rows above the floor for the garden distributors and their crop picker.
+    const top = this.layout.entities.some((e) => e.garden) ? -GARDEN_PICKER.y + 1 : 0;
+    const cell = Math.floor(Math.min((w - 40) / (this.layout.width + pad), (h - 40) / (this.layout.height + top)));
     this.view.cell = clamp(cell, MIN_CELL, 48);
     this.view.ox = Math.round((w - this.layout.width * this.view.cell) / 2);
-    this.view.oy = Math.round((h - this.layout.height * this.view.cell) / 2);
+    this.view.oy = Math.round((h - (this.layout.height + top) * this.view.cell) / 2 + top * this.view.cell);
     this.requestDraw();
   }
 
@@ -376,6 +378,19 @@ export class Editor {
     }, { passive: false });
   }
 
+  // A click on the strip of crops above the top wall sets the selected garden distributor.
+  /** @param {XY} cell */
+  pickGardenCrop(cell) {
+    const i = cell.x - GARDEN_PICKER.x;
+    if (cell.y !== GARDEN_PICKER.y || i < 0 || i >= GARDEN_ITEMS.length) return false;
+    const sel = this.selectedId != null ? this.layout.getEntity(this.selectedId) : null;
+    if (!sel?.garden) { this.status('Select a garden distributor first, then pick its crop', true); return true; }
+    const material = sel.material === GARDEN_ITEMS[i] ? '' : GARDEN_ITEMS[i];
+    this.mutate(() => this.layout.update(sel.id, { material, autoMaterial: false }));
+    this.renderInspector();
+    return true;
+  }
+
   /** @param {PointerEvent} ev */
   onPointerDown(ev) {
     if (this.drag) return;
@@ -400,6 +415,8 @@ export class Editor {
         this.drag = { mode: 'paint', before, last: cell };
         this.layout.setTerrain(cell.x, cell.y, this.terrainTool().terrain);
       }
+    } else if (this.pickGardenCrop(cell)) {
+      return;
     } else if (this.tool === 'select') {
       const e = this.layout.entityAt(cell.x, cell.y) ?? this.layout.gapAt(cell.x, cell.y);
       if (e && ENTITY_KINDS[e.kind].fixed) {
@@ -707,7 +724,8 @@ export class Editor {
     const b = entityBounds(e);
     el.append(field('Position', h('span', {}, `${e.x}, ${e.y}${b.w * b.h > 1 ? ` (${b.w}×${b.h})` : ''}`)));
     if (ENTITY_KINDS[e.kind].fixed) {
-      if (e.material) el.append(field('Material', h('span', {}, ITEM_BY_ID[e.material]?.name ?? e.material)));
+      if (e.garden) el.append(field('Crop', h('span', {}, e.material ? `${ITEM_BY_ID[e.material]?.name ?? e.material}${e.autoMaterial ? ' (set by the planner)' : ''}` : 'none: click one above the factory (the planner sets it if left empty)')));
+      else if (e.material) el.append(field('Material', h('span', {}, ITEM_BY_ID[e.material]?.name ?? e.material)));
       if (e.kind === 'cellar') {
         const boxes = CELLAR_ITEMS.map((id) => {
           const box = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox' }));

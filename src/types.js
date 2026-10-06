@@ -22,7 +22,9 @@
  * @property {boolean} [locked] the planner must keep it
  * @property {boolean} [planned] placed by the planner
  * @property {number} [rot] belts, undergrounds, splitters: travel direction; distributors and the cellar: output side; supply stations: input side
- * @property {string} [material] distributor: raw material id
+ * @property {string} [material] distributor: raw material id (a garden distributor: the crop it's set to, '' for none)
+ * @property {boolean} [garden] distributor: one of the garden's, set to a crop by the player or the planner
+ * @property {boolean} [autoMaterial] garden distributor: the planner set its crop
  * @property {StationType} [type] station
  * @property {number} [level] station level, or chest level (1 | 2)
  * @property {string} [variant] station port layout (see stationVariants)
