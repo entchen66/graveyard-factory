@@ -4,7 +4,7 @@
 
 import {
   DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
-  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor,
+  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor, isSupplyItem,
 } from './catalog.js';
 
 /** @typedef {import('./types.js').Dir} Dir */
@@ -438,6 +438,47 @@ export class Layout {
 
   // ---- validation ----------------------------------------------------------
 
+  // "Supply: ..." items can't enter a chest. Follows what stations making them push
+  // along belts, undergrounds and splitters: `belts` are the cells (belt, underground
+  // entry and exit, splitter) on a path that ends in a chest, `chests` those chests.
+  /** @returns {{ belts: { x: number, y: number, rot: number }[], chests: Entity[] }} */
+  supplyIntoChests() {
+    /** @type {Map<number, { x: number, y: number, rot: number }>} */
+    const belts = new Map();
+    /** @type {Set<Entity>} */
+    const chests = new Set();
+    /** @type {Map<string, boolean>} */
+    const memo = new Map();
+    const mark = (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ rot) => belts.set(y * this.width + x, { x, y, rot });
+    // Does what's pushed from (fx, fy) into (x, y) end up in a chest?
+    const reaches = (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ fx, /** @type {number} */ fy) => {
+      const t = this.entityAt(x, y);
+      if (!t || !this.acceptsFrom(t, fx, fy)) return false;
+      if (t.kind === 'chest') { chests.add(t); return true; }
+      if (t.kind !== 'belt' && t.kind !== 'underground' && t.kind !== 'splitter') return false;
+      const key = `${t.id}:${t.kind === 'belt' ? '' : `${fx},${fy}`}`;
+      if (memo.has(key)) return memo.get(key);
+      memo.set(key, false); // loops count as not reaching
+      const outs = this.ports(t).filter((p) => p.kind === 'out');
+      let hit = false;
+      for (const p of outs) if (reaches(p.nx, p.ny, p.x, p.y)) hit = true;
+      if (hit) {
+        if (t.kind === 'underground') {
+          const cells = entityCells(t);
+          mark(cells[0].x, cells[0].y, t.rot);
+          mark(cells[cells.length - 1].x, cells[cells.length - 1].y, t.rot);
+        } else mark(t.x, t.y, t.rot);
+      }
+      memo.set(key, hit);
+      return hit;
+    };
+    for (const e of this.entities) {
+      if (e.kind !== 'station' || !isSupplyItem(Object.keys(RECIPE_BY_ID[e.recipe]?.outputs ?? {})[0] ?? '')) continue;
+      for (const p of this.ports(e)) if (p.kind === 'out') reaches(p.nx, p.ny, p.x, p.y);
+    }
+    return { belts: [...belts.values()], chests: [...chests] };
+  }
+
   /** @returns {Issue[]} */
   validate() {
     /** @type {Issue[]} */
@@ -519,6 +560,7 @@ export class Layout {
         if (!fitsFront(o, i, back)) add('error', o, `${describeEntity(o)} can't be in front of ${describeEntity(dist)}: only a belt or an underground's belt cell can go there, not pointing into it`, [[x, y]]);
       }
     }
+    for (const c of this.supplyIntoChests().chests) add('error', c, `${describeEntity(c)} can't take "Supply: …" items, but a belt carries them into it`);
     const power = this.powerSupply();
     if (power.over) {
       add('warning', null, `Power ${power.used} is over the factory's ${power.available} (${power.maxZombies} zombies on ${power.carousels} carousels): ${power.over} too many`, []);

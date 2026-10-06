@@ -153,6 +153,9 @@ export function drawLayout(ctx, layout, view, overlay = {}) {
     for (const e of layout.entities) drawPorts(ctx, layout, e, cell);
   }
 
+  // Belts carrying "Supply: ..." items into a chest, which can't take them.
+  for (const b of layout.supplyIntoChests().belts) drawChevron(ctx, (b.x + 0.5) * cell, (b.y + 0.5) * cell, b.rot, cell * 0.28, COLORS.error, cell * 0.12);
+
   if (overlay.showIssues && overlay.issues) {
     // Info-level notes (e.g. "no recipe") are listed in the panel only.
     for (const issue of overlay.issues) {

@@ -474,6 +474,8 @@ export const CHEST_LEVELS = {
 export const CHEST_ART_OFFSET = [-4, -32];
 
 // "Supply: ..." items are delivered to a supply station rather than a chest.
+// The planner pulls supply stations (and the makers of supply items) towards this cell.
+export const SUPPLY_TARGET = { x: 31, y: 24 };
 /** @type {(id: string) => boolean} */
 export const isSupplyItem = (id) => id.startsWith('supply_');
 

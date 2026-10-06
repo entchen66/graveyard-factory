@@ -233,14 +233,13 @@ test('planner: places a 2x2 kitchen and routes it', () => {
   assert.ok(res.entities.some((e) => e.kind === 'station' && e.type === 'kitchen'));
 });
 
-test('planner: a "Supply: ..." output ends in a supply station near the top-right corner', () => {
+test('planner: a "Supply: ..." output ends in a supply station near 31,24', () => {
   const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
   const { res, out } = runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 600);
   const ss = res.entities.filter((e) => e.kind === 'supply_station');
   assert.equal(ss.length, 1);
   assert.ok(!res.entities.some((e) => e.kind === 'chest' && e.role === 'output'), 'no output chest');
-  const corner = new Planner(layout, plan1([{ item: 'supply_iron', rate: 1 }]), {}).corner;
-  assert.ok(Math.abs(corner.x - ss[0].x) + Math.abs(corner.y - ss[0].y) <= 6, `supply station at ${ss[0].x},${ss[0].y}`);
+  assert.ok(Math.abs(31 - ss[0].x) + Math.abs(24 - ss[0].y) <= 6, `supply station at ${ss[0].x},${ss[0].y}`);
   assert.deepEqual(layoutIssues(out), []);
 });
 
@@ -249,4 +248,16 @@ test('model: a supply station takes items on its input side only', () => {
   const ss = l.add({ kind: 'supply_station', x: 2, y: 2, rot: S });
   assert.equal(l.acceptsFrom(ss, 2, 3), true);
   assert.equal(l.acceptsFrom(ss, 1, 2), false);
+});
+
+test('planner: a product another station takes several of per craft goes through a buffer chest', () => {
+  const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  const { res, out } = runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 600);
+  assert.deepEqual(res.failures, []);
+  // Supply: Iron takes 8 ingots per craft; a top output can push straight into the chest.
+  const smithies = out.entities.filter((e) => e.kind === 'station' && e.recipe === 'iron_ingot');
+  const top = smithies.map((s) => out.ports(s).find((p) => p.kind === 'out')).filter((p) => p.dir % 2 === 0);
+  assert.ok(top.length > 0, 'a smithy with a top or bottom output');
+  for (const p of top) assert.equal(out.entityAt(p.nx, p.ny)?.kind, 'chest', `buffer chest at ${p.nx},${p.ny}`);
+  assert.deepEqual(layoutIssues(out), []);
 });

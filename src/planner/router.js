@@ -99,6 +99,7 @@ export const COST = {
   chest: 3,
 };
 
+export const MAX_STATIONS_PER_BELT = 3;
 const FREE = 0, BLOCKED = 1, BELT = 2, CHEST = 3;
 
 export class RouteGrid {
@@ -623,15 +624,41 @@ export class RouteGrid {
     return out;
   }
 
+  // A belt takes at most this many stations (distributors and supply chests don't count).
+  // Whether the route from `src` may still merge into belt cell `nd`.
+  /** @param {NetNode} nd @param {string} src */
+  canMergeInto(nd, src) {
+    const stations = new Set([src, ...nd.up]);
+    for (const id of stations) if (id === 'chest' || id.startsWith('dist:')) stations.delete(id);
+    return stations.size <= MAX_STATIONS_PER_BELT;
+  }
+
   // Belt cells the route may merge into from the side: lines leading only to `sink`.
   /**
    * @param {string} item
    * @param {string} sink
+   * @param {string} src
    * @param {Map<number, RouteTarget>} targets
    */
-  mergeTargets(item, sink, targets) {
+  mergeTargets(item, sink, src, targets) {
     for (const nd of this.net.values()) {
-      if (nd.item !== item || nd.kind !== 'belt' || nd.prev.length !== 1 || nd.down.size !== 1 || !nd.down.has(sink)) continue;
+      if (nd.item !== item || nd.kind !== 'belt' || nd.prev.length !== 1 || nd.down.size !== 1 || !nd.down.has(sink) || !this.canMergeInto(nd, src)) continue;
+      const mask = (1 << ((nd.rot + 1) % 4)) | (1 << ((nd.rot + 3) % 4));
+      targets.set(nd.k, { mask, end: { type: 'merge' } });
+    }
+  }
+
+  // Belt cells that only lead to supply stations: any "Supply: ..." item may merge
+  // into them from the side, since a supply station takes whatever arrives.
+  /**
+   * @param {Set<string>} supplySinks
+   * @param {string} src
+   * @param {Map<number, RouteTarget>} targets
+   */
+  mergeSupplyTargets(supplySinks, src, targets) {
+    for (const nd of this.net.values()) {
+      if (nd.kind !== 'belt' || nd.prev.length !== 1 || !nd.down.size || targets.has(nd.k) || !this.canMergeInto(nd, src)) continue;
+      if (![...nd.down].every((s) => supplySinks.has(s))) continue;
       const mask = (1 << ((nd.rot + 1) % 4)) | (1 << ((nd.rot + 3) % 4));
       targets.set(nd.k, { mask, end: { type: 'merge' } });
     }

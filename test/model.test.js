@@ -498,3 +498,17 @@ test('placed zombie carousels from older files are dropped (the factory\'s are f
   ] });
   assert.deepEqual(l.entities.map((e) => e.kind), ['belt']);
 });
+
+test('a chest at the end of a belt carrying a Supply item is an error and its belts are flagged', () => {
+  const l = Layout.blank(12, 12);
+  const st = l.add({ kind: 'station', type: 'assembly_bench', level: 1, x: 4, y: 5, recipe: 'supply_iron' });
+  const out = l.ports(st).find((p) => p.kind === 'out');
+  l.add({ kind: 'belt', x: out.nx, y: out.ny, rot: N });
+  assert.deepEqual(l.supplyIntoChests().belts, []);
+  assert.deepEqual(l.validate().filter((i) => i.severity === 'error'), []);
+  const chest = l.add({ kind: 'chest', x: out.nx, y: out.ny - 1 });
+  const flow = l.supplyIntoChests();
+  assert.deepEqual(flow.belts.map((b) => [b.x, b.y]), [[out.nx, out.ny]]);
+  assert.deepEqual(flow.chests.map((c) => c.id), [chest.id]);
+  assert.ok(l.validate().some((i) => i.severity === 'error' && i.entityId === chest.id));
+});

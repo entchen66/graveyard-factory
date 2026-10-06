@@ -901,7 +901,7 @@ const TOOL_HINT = {
   splitter: 'Takes items from behind and sends them out to both sides.',
   station: 'Stations cannot rotate. R cycles through the four input/output layouts.',
   chest: 'Accepts from any side, outputs to neighbouring belts not pointing in. Filters pick the sides that output.',
-  supply_station: 'Takes "Supply: …" crates from a belt on its input side. The planner puts these near the top-right corner.',
+  supply_station: 'Takes "Supply: …" crates from a belt on its input side. The planner puts these near the cell 31,24.',
 };
 
 /** @param {StationType} type @param {string} current @param {number} delta */

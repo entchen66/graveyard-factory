@@ -6,7 +6,7 @@
 // route costs (belts, turns, undergrounds, splitters, chests) plus a large
 // penalty per connection that could not be routed.
 
-import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, entityCells, stationVariants, isSupplyItem } from '../catalog.js';
+import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, entityCells, stationVariants, isSupplyItem, SUPPLY_TARGET } from '../catalog.js';
 import { RouteGrid, DX, DY, COST } from './router.js';
 import { powerOf, powerSupply } from '../model.js';
 
@@ -25,7 +25,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {StationType} type
  * @property {number | null} level
  * @property {string} item output
- * @property {{ item: string, rate: number }[]} ingredients per minute, one per input port
+ * @property {{ item: string, rate: number, qty: number }[]} ingredients per minute (and per craft), one per input port
  * @property {number} outRate per minute
  * @property {number} depth crafting steps above raw supply
  */
@@ -52,6 +52,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {string} id
  * @property {string} [item]
  * @property {number} [rate]
+ * @property {number} [qty] per craft (an input port: how many of the item one craft takes)
  * @property {number} [n] access cell
  * @property {number} [stub] cell held free straight out of the port (-1: none)
  * @property {number[]} [stubs] distributor stubs
@@ -65,7 +66,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {number} [left] rate not yet assigned to an edge
  */
 
-/** @typedef {{ src: Endpoint, sink: Endpoint, item: string, rate?: number, est?: number }} Edge */
+/** @typedef {{ src: Endpoint, sink: Endpoint, item: string, rate?: number, est?: number, buffer?: boolean }} Edge */
 
 /** @typedef {{ reason?: 'no room', station?: number, item?: string, from?: string, to?: string }} Failure */
 
@@ -89,11 +90,13 @@ export const FAIL_COST = 1000;
 // so more can't be added). Belts and chests cost 1 power each, so over the
 // maximum every piece saved counts this much more.
 export const OVER_POWER_COST = 20;
-// "Supply: ..." outputs end in a supply station, preferably near the floor's
-// top-right corner: this much extra cost per cell away from it, and how many of
-// the nearest free cells are offered.
+// "Supply: ..." outputs end in a supply station, preferably near SUPPLY_TARGET:
+// this much extra cost per cell away from it, and how many of the nearest free
+// cells are offered.
 const SUPPLY_CORNER_COST = 2;
 const SUPPLY_CANDIDATES = 40;
+// Extra cost of a buffered output (see `Edge.buffer`) that has no chest: only when a chest can't fit.
+const BUFFER_MISS_COST = 30;
 const sizeOf = (/** @type {StationInstance} */ s) => STATIONS[s.type].size;
 const variantsOf = (/** @type {StationInstance} */ s) => Object.keys(stationVariants(s.type));
 // Do two station footprints come closer than `gap` free cells?
@@ -130,7 +133,7 @@ export function stationInstances(production) {
       left -= crafts;
       out.push({
         idx: out.length, recipe: r.recipe, type: r.station, level: r.level, item: r.item,
-        ingredients: Object.entries(recipe.inputs).map(([item, qty]) => ({ item, rate: qty * crafts })),
+        ingredients: Object.entries(recipe.inputs).map(([item, qty]) => ({ item, rate: qty * crafts, qty })),
         outRate: recipe.outputs[r.item] * crafts,
         depth: depth.get(r.item),
       });
@@ -292,15 +295,12 @@ export class Planner {
     }
   }
 
-  // Where supply stations may go: the free floor cells nearest the top-right
-  // corner of the floor (outside distributor aprons), with their distance to it.
-  // Existing supply stations are targets too.
+  // Where supply stations may go: the free floor cells nearest SUPPLY_TARGET
+  // (outside distributor aprons), with their distance to it. Existing supply
+  // stations are targets too.
   _buildSupplyCells() {
     const g = this.base, l = this.layout;
-    let cx = -1, cy = Infinity;
-    for (let y = 0; y < l.height; y++) for (let x = 0; x < l.width; x++) {
-      if (l.isFloor(x, y)) { cx = Math.max(cx, x); cy = Math.min(cy, y); }
-    }
+    const { x: cx, y: cy } = SUPPLY_TARGET;
     this.corner = { x: cx, y: cy };
     /** @param {number} x @param {number} y */
     const dist = (x, y) => Math.abs(cx - x) + Math.abs(cy - y);
@@ -546,7 +546,7 @@ export class Planner {
       inputs.forEach((q, j) => {
         const n = g.key(q.nx, q.ny);
         g.reserved[n] = 1;
-        sinks.push({ id: `s${i}i${j}`, item: q.item, rate: s.ingredients[j].rate, n, stub: stub(n, q.dir), P: g.key(q.x, q.y), into: rev(q.dir), station: i });
+        sinks.push({ id: `s${i}i${j}`, item: q.item, rate: s.ingredients[j].rate, qty: s.ingredients[j].qty, n, stub: stub(n, q.dir), P: g.key(q.x, q.y), into: rev(q.dir), station: i });
       });
       const n = g.key(output.nx, output.ny);
       g.reserved[n] = 1;
@@ -600,6 +600,9 @@ export class Planner {
         edges.push({ src: p, sink: c, item: c.item, rate: amount });
       }
     }
+    // A station's product that another station takes several of per craft goes through a
+    // chest on the output, which builds up a buffer for it.
+    for (const e of edges) e.buffer = e.src.station != null && !e.sink.final && !isSupplyItem(e.item) && (e.sink.qty ?? 1) > 1;
     for (const e of edges) e.est = e.src.chest ? 2 : e.sink.final ? 3 : this._dist(e.src.n, e.sink.n);
     /** @type {Map<string, number>} */
     const fanout = new Map();
@@ -608,6 +611,8 @@ export class Planner {
 
     // Route in order.
     const usedSrc = /** @type {Set<string>} */ (new Set()), connected = /** @type {Set<string>} */ (new Set()), finalChest = /** @type {Map<string, number>} */ (new Map());
+    // Lines that only lead to supply stations take any "Supply: ..." item, so they can merge.
+    const supplySinks = new Set(finals.filter((f) => isSupplyItem(f.item)).map((f) => f.id));
     let cost = 0;
     for (const e of edges) {
       const { src, sink, item } = e;
@@ -624,11 +629,11 @@ export class Planner {
         // A station output facing left or right needs a belt: it can't push
         // straight into a chest (a top output can).
         const sideOutput = src.station != null && src.d % 2 === 1;
-        starts = [{ k: src.n, d: src.d, cost: 0, noChest: sideOutput, origin: { type: 'port' } }];
+        starts = [{ k: src.n, d: src.d, cost: e.buffer && !sideOutput ? BUFFER_MISS_COST : 0, noChest: sideOutput, origin: { type: 'port' } }];
         allow.add(src.n);
         // Or a chest hub right on the output, worth it when the source feeds several consumers.
         if (!sink.final && !sideOutput && g.chestOk(src.n, src.d, allow, true)) {
-          const hubCost = (fanout.get(src.id) ?? 1) > 1 ? 1 : COST.hub;
+          const hubCost = e.buffer || (fanout.get(src.id) ?? 1) > 1 ? 1 : COST.hub;
           for (let d = 0; d < 4; d++) {
             if (d === rev(src.d)) continue;
             starts.push({ k: g.step(src.n, d), d, cost: hubCost, straight: true, origin: { type: 'portHub', k: src.n } });
@@ -643,17 +648,18 @@ export class Planner {
       let flexChest = false;
       if (sink.final && isSupplyItem(item)) {
         this._supplyTargets(g, targets, allow);
-        g.mergeTargets(item, sink.id, targets);
+        g.mergeTargets(item, sink.id, src.id, targets);
+        g.mergeSupplyTargets(supplySinks, src.id, targets);
       } else if (sink.final) {
         const ck = finalChest.get(sink.id);
         if (ck == null) flexChest = true;
-        else { g.chestTarget(ck, targets); g.mergeTargets(item, sink.id, targets); }
+        else { g.chestTarget(ck, targets); g.mergeTargets(item, sink.id, src.id, targets); }
       } else if (!connected.has(sink.id)) {
         targets.set(sink.P, { mask: 1 << sink.into, end: { type: 'port' } });
         allow.add(sink.n);
         if (sink.stub >= 0) allow.add(sink.stub);
       } else {
-        g.mergeTargets(item, sink.id, targets);
+        g.mergeTargets(item, sink.id, src.id, targets);
       }
       const res = starts.length && (flexChest || targets.size)
         ? g.routeSound({ starts, targets, flexChest, allow, exempt, goalCells: flexChest ? null : [...targets.keys()] })
