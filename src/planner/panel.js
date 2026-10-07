@@ -182,7 +182,7 @@ export class PlannerPanel {
     // Recipe choice where the plan uses an item with alternatives.
     for (const r of prod.recipes) {
       const alts = recipesProducing(r.item);
-      if (alts.length < 2) continue;
+      if (alts.length < 2 || CROP_VARIANTS.some((v) => v.item.id === r.item)) continue; // those are picked in the target list
       /** @type {[string, string][]} */
       const opts = alts.map((a) => [a.id, Object.keys(a.inputs).map((i) => ITEM_BY_ID[i]?.name ?? i).join(' + ')]);
       el.append(field(ITEM_BY_ID[r.item].name, selectEl(opts, r.recipe,
@@ -282,9 +282,11 @@ function itemLabel(id) {
   return wrap;
 }
 
-// Items with a recipe for each crop (Preserves) get an entry per crop: "Supply: Preserves II (Onion ★★★)".
+// Items with a recipe for each crop or wine quality (Vegetables, Preserves, Wine) get an entry per recipe
+// in the target list: "Supply: Preserves II (Onion ★★★)".
+const VARIANT_INPUTS = [...GARDEN_ITEMS, ...CELLAR_ITEMS];
 const CROP_VARIANTS = TARGET_ITEMS.map((i) => ({ item: i, recipes: recipesProducing(i.id) }))
-  .filter(({ recipes }) => recipes.length > 1 && recipes.every((r) => Object.keys(r.inputs).some((k) => GARDEN_ITEMS.includes(k))));
+  .filter(({ recipes }) => recipes.length > 1 && recipes.every((r) => Object.keys(r.inputs).some((k) => VARIANT_INPUTS.includes(k))));
 
 /**
  * @param {string} value
@@ -302,7 +304,7 @@ function itemSelect(value, recipe, onChange) {
       if (!variants) { g.append(h('option', { value: i.id }, i.name)); continue; }
       g.append(h('option', { value: i.id }, `${i.name} (any crop)`));
       for (const r of variants) {
-        const crop = Object.keys(r.inputs).find((k) => GARDEN_ITEMS.includes(k)) ?? '';
+        const crop = Object.keys(r.inputs).find((k) => VARIANT_INPUTS.includes(k)) ?? '';
         g.append(h('option', { value: `${i.id}|${r.id}` }, `${i.name} (${ITEM_BY_ID[crop]?.name ?? crop})`));
       }
     }
