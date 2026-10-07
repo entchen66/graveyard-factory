@@ -310,3 +310,10 @@ test('planner: chests (no power) stand in for belts at turns and after undergrou
   assert.deepEqual(out.supplyIntoChests().chests, []);
   for (const c of pass) assert.notEqual(Object.values(c.filters)[0], 'supply_iron');
 });
+
+test('planner: a recipe whose crop a distributor holds beats one needing a chest', () => {
+  const only = (/** @type {string} */ crop) => planProduction([{ item: 'supply_preserves_2', rate: 1 }], { distributors: new Set(['coal', 'sand', 'stone', crop]) });
+  assert.equal(only('onion_3').supply.onion_3.source, 'distributor');
+  assert.equal(only('pumpkin_2').supply.pumpkin_2.source, 'distributor');
+  assert.equal(only('onion_3').supply.onion_1, undefined);
+});

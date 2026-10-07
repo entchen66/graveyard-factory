@@ -48,7 +48,8 @@ export function stationLevel(recipe, options = {}) {
 }
 
 // Recipe used to make `item`: an explicit choice, else the first runnable one,
-// preferring recipes that need no hand-stocked ingredients, then fewer inputs.
+// preferring recipes that need no hand-stocked ingredients (those with no producer
+// and no distributor), then fewer inputs, then fewer items in all.
 /**
  * @param {string} item
  * @param {ProductionOptions} [options]
@@ -58,9 +59,11 @@ export function chooseRecipe(item, options = {}) {
   const choice = options.recipeChoice?.[item];
   const all = recipesProducing(item).filter((r) => stationLevel(r, options) != null);
   if (choice) return all.find((r) => r.id === choice) ?? null;
-  const handStocked = (/** @type {Recipe} */ r) => Object.keys(r.inputs).filter((i) => !RAW.has(i) && !recipesProducing(i).length).length;
+  const total = (/** @type {Recipe} */ r) => Object.values(r.inputs).reduce((n, q) => n + q, 0);
+  const handStocked = (/** @type {Recipe} */ r) => Object.keys(r.inputs).filter((i) => !RAW.has(i) && !recipesProducing(i).length && !options.distributors?.has(i)).length;
   return [...all].sort((a, b) => handStocked(a) - handStocked(b)
-    || Object.keys(a.inputs).length - Object.keys(b.inputs).length)[0] ?? null;
+    || Object.keys(a.inputs).length - Object.keys(b.inputs).length
+    || total(a) - total(b))[0] ?? null;
 }
 
 // targets: [{ item, rate }] in items per minute.
