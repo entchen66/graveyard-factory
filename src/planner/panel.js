@@ -59,14 +59,14 @@ export class PlannerPanel {
   baseLayout() {
     const base = this.editor.layout.clone();
     for (const e of base.entities.filter((x) => x.planned)) base.remove(e.id);
-    base.clearAutoMaterials();
+    for (const e of base.entities) if (e.garden) { e.material = ''; delete e.autoMaterial; }
     return base;
   }
 
   production() {
     const s = this.settings;
-    // A garden distributor with no crop (or one the planner set last time) can take any of them.
-    const distributors = new Set(this.editor.layout.entities.flatMap((e) => e.garden && (!e.material || e.autoMaterial) ? GARDEN_ITEMS : e.kind === 'distributor' ? [e.material] : e.kind === 'cellar' ? CELLAR_ITEMS : []));
+    // The planner sets every garden distributor's crop itself.
+    const distributors = new Set(this.editor.layout.entities.flatMap((e) => e.garden ? GARDEN_ITEMS : e.kind === 'distributor' ? [e.material] : e.kind === 'cellar' ? CELLAR_ITEMS : []));
     return planProduction(s.targets, { maxLevel: s.maxLevel, recipeChoice: s.recipeChoice, distributors });
   }
 
@@ -156,7 +156,10 @@ export class PlannerPanel {
     // Targets.
     const list = h('div', { class: 'targets' });
     s.targets.forEach((t, i) => {
-      const sel = itemSelect(t.item, (v) => { s.targets[i] = { ...t, item: v }; this.update({}); });
+      const sel = itemSelect(t.item, t.recipe, (item, recipe) => {
+        s.targets[i] = { item, rate: t.rate, ...(recipe ? { recipe } : {}) };
+        this.update({});
+      });
       const rate = h('input', { type: 'number', min: 0, step: 0.5, value: t.rate, title: 'Items per minute' });
       rate.addEventListener('change', () => { s.targets[i] = { ...t, rate: Math.max(0, parseFloat(rate.value) || 0) }; this.update({}); });
       const del = h('button', { type: 'button', title: 'Remove' }, '×');
@@ -279,21 +282,34 @@ function itemLabel(id) {
   return wrap;
 }
 
+// Items with a recipe for each crop (Preserves) get an entry per crop: "Supply: Preserves II (Onion ★★★)".
+const CROP_VARIANTS = TARGET_ITEMS.map((i) => ({ item: i, recipes: recipesProducing(i.id) }))
+  .filter(({ recipes }) => recipes.length > 1 && recipes.every((r) => Object.keys(r.inputs).some((k) => GARDEN_ITEMS.includes(k))));
+
 /**
  * @param {string} value
- * @param {(value: string) => void} onChange
+ * @param {string | undefined} recipe
+ * @param {(item: string, recipe?: string) => void} onChange
  */
-function itemSelect(value, onChange) {
+function itemSelect(value, recipe, onChange) {
   const supplies = TARGET_ITEMS.filter((i) => i.id.startsWith('supply_'));
   const others = TARGET_ITEMS.filter((i) => !i.id.startsWith('supply_'));
   const s = h('select');
   for (const [label, items] of /** @type {[string, Item[]][]} */ ([['Town supplies', supplies], ['Products', others]])) {
     const g = h('optgroup', { label });
-    for (const i of items) g.append(h('option', { value: i.id }, i.name));
+    for (const i of items) {
+      const variants = CROP_VARIANTS.find((v) => v.item === i)?.recipes;
+      if (!variants) { g.append(h('option', { value: i.id }, i.name)); continue; }
+      g.append(h('option', { value: i.id }, `${i.name} (any crop)`));
+      for (const r of variants) {
+        const crop = Object.keys(r.inputs).find((k) => GARDEN_ITEMS.includes(k)) ?? '';
+        g.append(h('option', { value: `${i.id}|${r.id}` }, `${i.name} (${ITEM_BY_ID[crop]?.name ?? crop})`));
+      }
+    }
     s.append(g);
   }
-  s.value = value;
-  s.addEventListener('change', () => onChange(s.value));
+  s.value = recipe ? `${value}|${recipe}` : value;
+  s.addEventListener('change', () => { const [item, r] = s.value.split('|'); onChange(item, r); });
   return s;
 }
 

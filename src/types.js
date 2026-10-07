@@ -102,7 +102,7 @@
 
 /** Canvas view: cell size in CSS px, pan offset, device pixel ratio. @typedef {{ cell: number, ox: number, oy: number, dpr: number }} View */
 
-/** Planner targets: item and rate per minute. @typedef {{ item: string, rate: number }} Target */
+/** Planner targets: item and rate per minute, and the recipe to make it with if chosen. @typedef {{ item: string, rate: number, recipe?: string }} Target */
 
 /**
  * Options for planProduction.

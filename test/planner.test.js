@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Layout, VOID, REPAIRABLE_SECTIONS } from '../src/model.js';
 import { factoryFloor } from '../src/floor.js';
-import { N, E, S, RECIPES, CELLAR_ITEMS, supplyZoneDistance } from '../src/catalog.js';
+import { N, E, S, RECIPES, CELLAR_ITEMS, GARDEN_ITEMS, supplyZoneDistance } from '../src/catalog.js';
 import { planProduction, chooseRecipe } from '../src/planner/production.js';
 import { RouteGrid } from '../src/planner/router.js';
 import { Planner, stationInstances, applyResult } from '../src/planner/planner.js';
@@ -316,4 +316,11 @@ test('planner: a recipe whose crop a distributor holds beats one needing a chest
   assert.equal(only('onion_3').supply.onion_3.source, 'distributor');
   assert.equal(only('pumpkin_2').supply.pumpkin_2.source, 'distributor');
   assert.equal(only('onion_3').supply.onion_1, undefined);
+});
+
+test('planner: a target can name its recipe, and the crop comes from the garden', () => {
+  const garden = new Set(['coal', 'sand', 'stone', ...GARDEN_ITEMS]);
+  const prod = planProduction([{ item: 'supply_preserves_2', rate: 1, recipe: 'supply_preserves_2_onion_1' }], { distributors: garden });
+  assert.equal(prod.supply.onion_1.source, 'distributor');
+  assert.equal(prod.supply.pumpkin_3, undefined);
 });

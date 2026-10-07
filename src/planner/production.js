@@ -75,6 +75,9 @@ export function chooseRecipe(item, options = {}) {
  * @returns {ProductionPlan}
  */
 export function planProduction(targets, options = {}) {
+  // A target can name the recipe it's made with.
+  const chosen = targets.filter((t) => t.recipe);
+  if (chosen.length) options = { ...options, recipeChoice: { ...options.recipeChoice, ...Object.fromEntries(chosen.map((t) => [t.item, t.recipe])) } };
   /** @type {string[]} */
   const errors = [];
   /** @type {Map<string, number>} */
