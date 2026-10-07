@@ -6,7 +6,7 @@
 // route costs (belts, turns, undergrounds, splitters, chests) plus a large
 // penalty per connection that could not be routed.
 
-import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, GARDEN_ITEMS, entityCells, stationVariants, isSupplyItem, SUPPLY_TARGET } from '../catalog.js';
+import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, GARDEN_ITEMS, entityCells, stationVariants, isSupplyItem, supplyZoneDistance, PORTER, portersFor } from '../catalog.js';
 import { RouteGrid, DX, DY, COST } from './router.js';
 import { powerOf, powerSupply } from '../model.js';
 
@@ -41,7 +41,7 @@ import { powerOf, powerSupply } from '../model.js';
  * @property {number} [gap] free cells kept between stations
  * @property {number} [failCost] penalty per unrouted connection
  * @property {number} [overPowerCost] penalty per point of power over the maximum
- * @property {number} [supplyCornerCost] extra cost per cell from the supply corner
+ * @property {number} [supplyCornerCost] extra cost per cell from the supply zone
  * @property {number} [timeMs] search budget (used by the worker)
  */
 
@@ -88,13 +88,13 @@ import { powerOf, powerSupply } from '../model.js';
 // routing everything always wins.
 export const FAIL_COST = 1000;
 // Score per point of power over the factory's maximum (its carousels are fixed,
-// so more can't be added). Belts and chests cost 1 power each, so over the
+// so more can't be added). Belts cost 1 power each (chests none), so over the
 // maximum every piece saved counts this much more.
 export const OVER_POWER_COST = 20;
-// "Supply: ..." outputs end in a supply station, preferably near SUPPLY_TARGET:
+// "Supply: ..." outputs end in a supply station, preferably on or near SUPPLY_ZONE (a weak pull, to save power):
 // this much extra cost per cell away from it, and how many of the nearest free
 // cells are offered.
-const SUPPLY_CORNER_COST = 2;
+const SUPPLY_CORNER_COST = 1;
 const SUPPLY_CANDIDATES = 40;
 // Extra cost of a buffered output (see `Edge.buffer`) that has no chest: only when a chest can't fit.
 const BUFFER_MISS_COST = 30;
@@ -228,6 +228,7 @@ export class Planner {
         if (!l.inBounds(p.nx, p.ny)) continue;
         const k = g.key(p.nx, p.ny);
         if (g.occ[k] === 0) g.reserved[k] = 0;
+        g.noChest[k] = 1;
         if (ENTITY_KINDS[e.kind].feeds && p.kind === 'out') {
           if (e.kind === 'distributor' && e.garden && !e.material) freeGarden.push({ id: e.id, k, d: p.dir });
           else if (e.kind === 'distributor') this.distributors.set(e.material, { k, d: p.dir });
@@ -238,6 +239,7 @@ export class Planner {
     }
     this._useCellar(g, cellar);
     this._useGarden(g, freeGarden);
+    this._reservePorters(g);
     this.base = g;
     // Footprint positions free of obstacles, per station size.
     /** @type {Record<number, { x: number, y: number }[]>} */
@@ -300,6 +302,37 @@ export class Planner {
     });
   }
 
+  // Zombie Supply Porters (one per 3 supply stations) go along PORTER.row, each 1 wide and 2
+  // high. The plan can't know how many supply stations it ends up with, so room for the most it
+  // could need is kept free (blocked for the router) up front, and only the ones needed are built.
+  /** @param {RouteGrid} g */
+  _reservePorters(g) {
+    const l = this.layout;
+    const makers = this.stations.filter((s) => this.production.final[s.item] && isSupplyItem(s.item)).length;
+    this.supplyHave = l.entities.filter((e) => e.kind === 'supply_station').length;
+    this.portersHave = l.entities.filter((e) => e.kind === 'porter').length;
+    const need = Math.max(0, portersFor(this.supplyHave + makers) - this.portersHave);
+    /** @type {{ x: number, y: number }[]} */
+    this.porterSlots = [];
+    const { x0, x1, y } = PORTER.row;
+    const free = (/** @type {number} */ k) => g.floor[k] && g.occ[k] === 0 && g.reserved[k] === -1 && g.gap[k] === -1;
+    for (let x = x0; x <= x1 && this.porterSlots.length < need; x++) {
+      const a = g.key(x, y), b = g.key(x, y + 1);
+      if (!free(a) || !free(b)) continue;
+      g.block(a);
+      g.block(b);
+      this.porterSlots.push({ x, y });
+    }
+  }
+
+  // The porters the routed supply stations need beyond the ones already placed (as many as there's room for).
+  /** @param {RouteGrid} g */
+  _portersToBuild(g) {
+    let n = this.supplyHave;
+    for (const e of g.placed.values()) if (e.kind === 'supply_station') n++;
+    return Math.min(this.porterSlots.length, Math.max(0, portersFor(n) - this.portersHave));
+  }
+
   // Cells in front of each distributor the plan uses, where no station may go:
   // 3 wide and 4 deep, so the supply line can leave and turn.
   _buildAprons() {
@@ -317,15 +350,13 @@ export class Planner {
     }
   }
 
-  // Where supply stations may go: the free floor cells nearest SUPPLY_TARGET
+  // Where supply stations may go: the free floor cells nearest SUPPLY_ZONE
   // (outside distributor aprons), with their distance to it. Existing supply
   // stations are targets too.
   _buildSupplyCells() {
     const g = this.base, l = this.layout;
-    const { x: cx, y: cy } = SUPPLY_TARGET;
-    this.corner = { x: cx, y: cy };
     /** @param {number} x @param {number} y */
-    const dist = (x, y) => Math.abs(cx - x) + Math.abs(cy - y);
+    const dist = supplyZoneDistance;
     const cells = [];
     for (let y = 0; y < l.height; y++) for (let x = 0; x < l.width; x++) {
       const k = g.key(x, y);
@@ -468,10 +499,10 @@ export class Planner {
             }
           }
           if (cx != null) cost += 0.3 * (Math.abs(cx - spot.x) + Math.abs(cy - spot.y));
-          // Makers of a final "Supply: ..." item start near the supply corner.
+          // Makers of a final "Supply: ..." item start near the supply zone.
           if (this.production.final[s.item] && isSupplyItem(s.item)) {
             const out = this.ports(s, p).output;
-            cost += Math.abs(this.corner.x - out.nx) + Math.abs(this.corner.y - out.ny);
+            cost += supplyZoneDistance(out.nx, out.ny);
           }
           // Leave room for belts: a one-cell gap fits a single belt only.
           for (const o of placed) {
@@ -516,7 +547,7 @@ export class Planner {
   _evaluate(placements) {
     const b = this.base;
     const g = new RouteGrid(b.W, b.H);
-    for (const f of /** @type {const} */ (['floor', 'occ', 'rot', 'gap', 'body', 'reserved', 'chestFeeds', 'distFront'])) g[f].set(b[f]);
+    for (const f of /** @type {const} */ (['floor', 'occ', 'rot', 'gap', 'body', 'reserved', 'noChest', 'chestFeeds', 'distFront'])) g[f].set(b[f]);
 
     // The cellar's belt and sorting chest, with the chest's three outer sides
     // kept free for its lines.
@@ -564,6 +595,10 @@ export class Planner {
         return;
       }
       for (let dy = 0; dy < sizeOf(s); dy++) for (let dx = 0; dx < sizeOf(s); dx++) g.block(g.key(p.x + dx, p.y + dy));
+      for (const q of stationVariants(s.type)[p.variant].ports) {
+        const k = g.step(g.key(p.x + q.x, p.y + q.y), q.dir);
+        if (k >= 0) g.noChest[k] = 1;
+      }
       const { inputs, output } = this.ports(s, p);
       inputs.forEach((q, j) => {
         const n = g.key(q.nx, q.ny);
@@ -684,7 +719,7 @@ export class Planner {
         g.mergeTargets(item, sink.id, src.id, targets);
       }
       const res = starts.length && (flexChest || targets.size)
-        ? g.routeSound({ starts, targets, flexChest, allow, exempt, goalCells: flexChest ? null : [...targets.keys()] })
+        ? g.routeSound({ starts, targets, flexChest, allow, exempt, noPass: isSupplyItem(item), goalCells: flexChest ? null : [...targets.keys()] })
         : null;
       if (!res) {
         failures.push({ item, from: src.id, to: sink.id });
@@ -805,6 +840,7 @@ export class Planner {
       entities.push({ kind: 'station', type: s.type, level: s.level, variant: p.variant, x: p.x, y: p.y, recipe: s.recipe, extensions: RECIPE_BY_ID[s.recipe]?.extension ? [RECIPE_BY_ID[s.recipe].extension] : [], inputs: byPort });
     });
     for (const e of r.grid.placed.values()) entities.push({ ...e });
+    for (const slot of this.porterSlots.slice(0, this._portersToBuild(r.grid))) entities.push({ kind: 'porter', ...slot });
     for (const e of entities) { e.planned = true; e.locked = false; }
     const supply = powerSupply(this.basePower + powerOf(entities), this.beltMaster);
     const count = (/** @type {string} */ kind) => entities.filter((e) => e.kind === kind).length;

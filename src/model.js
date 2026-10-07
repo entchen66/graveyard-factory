@@ -4,7 +4,7 @@
 
 import {
   DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
-  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_GARDEN_DISTRIBUTORS, GARDEN_ITEMS, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor, isSupplyItem,
+  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_GARDEN_DISTRIBUTORS, GARDEN_ITEMS, portersFor, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor, isSupplyItem,
 } from './catalog.js';
 
 /** @typedef {import('./types.js').Dir} Dir */
@@ -574,6 +574,9 @@ export class Layout {
       }
     }
     for (const c of this.supplyIntoChests().chests) add('error', c, `${describeEntity(c)} can't take "Supply: …" items, but a belt carries them into it`);
+    const supplyStations = this.entities.filter((e) => e.kind === 'supply_station').length;
+    const porters = this.entities.filter((e) => e.kind === 'porter').length;
+    if (porters < portersFor(supplyStations)) add('info', null, `${supplyStations} supply station${supplyStations === 1 ? '' : 's'} need ${portersFor(supplyStations)} Zombie Supply Porter${portersFor(supplyStations) === 1 ? '' : 's'}, one for every 3; ${porters} placed`, []);
     const power = this.powerSupply();
     if (power.over) {
       add('warning', null, `Power ${power.used} is over the factory's ${power.available} (${power.maxZombies} zombies on ${power.carousels} carousels): ${power.over} too many`, []);

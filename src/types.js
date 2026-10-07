@@ -8,7 +8,7 @@
 
 /** Terrain cell: '.' floor, ' ' outside. @typedef {string} Terrain */
 
-/** @typedef {'belt' | 'underground' | 'splitter' | 'chest' | 'distributor' | 'cellar' | 'station' | 'supply_station'} EntityKind */
+/** @typedef {'belt' | 'underground' | 'splitter' | 'chest' | 'distributor' | 'cellar' | 'station' | 'supply_station' | 'porter'} EntityKind */
 /** @typedef {'assembly_bench' | 'smithy' | 'kitchen'} StationType */
 
 /**
@@ -33,7 +33,7 @@
  * @property {(string | null)[]} [inputs] planned station: item taken by each input port
  * @property {string[]} [stock] chest: items provisioned by hand; cellar: the beer and wine it holds
  * @property {Partial<Record<SideName, string>>} [filters] chest: item sent out of each side
- * @property {'supply' | 'output' | 'hub'} [role] planned chest
+ * @property {'supply' | 'output' | 'hub' | 'pass'} [role] planned chest
  */
 
 /** Entity fields as passed to `Layout.add` (no id yet). @typedef {Omit<Entity, 'id'> & { id?: number }} EntitySpec */

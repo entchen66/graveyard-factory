@@ -413,6 +413,7 @@ function hashColor(id) {
 //                all mixed onto the one belt it feeds towards `rot`.
 //   supply_station 1x1 sink for "Supply: ..." crates (the game's Supply Station),
 //                taking items from the neighbouring cell on its `rot` side.
+//   porter       1 wide, 2 high Zombie Supply Porter: one for every 3 supply stations, no ports
 //   station      3x3, fixed orientation; `variant` picks the port layout.
 /** @type {Record<EntityKind, EntityKindDef>} */
 export const ENTITY_KINDS = {
@@ -423,6 +424,7 @@ export const ENTITY_KINDS = {
   distributor: { name: 'Distribution station', rotatable: true, hasMaterial: true, fixed: true, feeds: true },
   cellar: { name: 'Cellar', fixed: true, feeds: true },
   supply_station: { name: 'Supply station', rotatable: true },
+  porter: { name: 'Zombie Supply Porter' },
   station: { name: 'Station' },
 };
 
@@ -474,8 +476,16 @@ export const CHEST_LEVELS = {
 export const CHEST_ART_OFFSET = [-4, -32];
 
 // "Supply: ..." items are delivered to a supply station rather than a chest.
-// The planner pulls supply stations (and the makers of supply items) towards this cell.
-export const SUPPLY_TARGET = { x: 31, y: 24 };
+// The planner pulls supply stations (and the makers of supply items) towards this row segment.
+// The Zombie Supply Porter (1 wide, 2 high; from the user): one per 3 supply stations, built
+// from `PORTER.build`. The planner puts them at x0..x1 on row `y` (the top cell; it also takes
+// the row below). It uses no power (from the user).
+export const PORTER = { stationsEach: 3, row: { x0: 23, x1: 29, y: 24 }, build: { wooden_plank: 4, iron_nails: 8, iron_detail: 2 } };
+/** @type {(supplyStations: number) => number} */
+export const portersFor = (supplyStations) => Math.ceil(supplyStations / PORTER.stationsEach);
+export const SUPPLY_ZONE = { x0: 23, x1: 31, y: 27 };
+/** @type {(x: number, y: number) => number} cells from the zone (0 on it) */
+export const supplyZoneDistance = (x, y) => Math.abs(y - SUPPLY_ZONE.y) + Math.max(0, SUPPLY_ZONE.x0 - x, x - SUPPLY_ZONE.x1);
 /** @type {(id: string) => boolean} */
 export const isSupplyItem = (id) => id.startsWith('supply_');
 
@@ -483,7 +493,8 @@ export const isSupplyItem = (id) => id.startsWith('supply_');
 // underground conveyor (confirmed by the user). Kinds not listed cost nothing.
 // The icon is the game's power gear, tinted yellow.
 /** @type {Partial<Record<import('./types.js').EntityKind, number>>} */
-export const POWER_COST = { station: 1, belt: 1, chest: 1, underground: 2 };
+// Chests and the Zombie Supply Porter use none (from the user).
+export const POWER_COST = { station: 1, belt: 1, underground: 2 };
 export const POWER_ICON = 'assets/ui/power.webp';
 
 // Power comes from zombies on the factory's zombie carousels. They're fixed
@@ -593,6 +604,7 @@ export function entityCells(e) {
     const d = DIRS[e.rot];
     return Array.from({ length: UNDERGROUND_LENGTH }, (_, i) => ({ x: e.x + d.dx * i, y: e.y + d.dy * i, gap: i === UNDERGROUND_GAP }));
   }
+  if (e.kind === 'porter') return [{ x: e.x, y: e.y, gap: false }, { x: e.x, y: e.y + 1, gap: false }];
   return [{ x: e.x, y: e.y, gap: false }];
 }
 

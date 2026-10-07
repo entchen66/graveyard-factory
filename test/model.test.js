@@ -461,17 +461,17 @@ test('a station side output needs a belt before a chest; a top output does not',
   assert.ok(!warns(top).some((m) => /side output/.test(m)));
 });
 
-test('factory power: 1 per station, belt and chest, 2 per underground', () => {
+test('factory power: 1 per station and belt, 2 per underground, none for chests', () => {
   const l = Layout.blank(12, 8);
   l.add({ kind: 'station', type: 'smithy', level: 1, x: 1, y: 1 });
   l.add({ kind: 'belt', x: 5, y: 1, rot: E });
   l.add({ kind: 'belt', x: 6, y: 1, rot: E });
-  l.add({ kind: 'chest', x: 7, y: 1 });
+  l.add({ kind: 'chest', x: 7, y: 1 });                  // no power
   l.add({ kind: 'splitter', x: 8, y: 3, rot: E });       // no power listed
   l.add({ kind: 'distributor', x: 0, y: 7, rot: N, material: 'coal' });
-  assert.equal(l.power(), 4);
+  assert.equal(l.power(), 3);
   l.add({ kind: 'underground', x: 1, y: 5, rot: E });
-  assert.equal(l.power(), 6);
+  assert.equal(l.power(), 5);
 });
 
 test('power supply: 5 fixed carousels, 20 zombies, 7 power each (10 with Belt Master)', async () => {
@@ -531,4 +531,20 @@ test('garden distributors: 1,-1 3,-1 5,-1 feed 1,0 3,0 5,0 once section 1 is rep
   assert.ok(again.validate().some((i) => i.severity === 'error' && /can't hold/.test(i.message)));
   again.setRepaired(again.repaired.filter((id) => id !== 1));
   assert.equal(again.entities.filter((e) => e.garden).length, 0);
+});
+
+test('Zombie Supply Porter: 1 wide, 2 high, 1 power, and one is wanted for every 3 supply stations', () => {
+  const l = Layout.blank(10, 10);
+  const p = l.add({ kind: 'porter', x: 2, y: 2 });
+  assert.deepEqual(l.footprint(p), [[2, 2], [2, 3]]);
+  assert.equal(l.canPlace({ kind: 'chest', x: 2, y: 3 }).ok, false);
+  assert.equal(l.canPlace({ kind: 'porter', x: 2, y: 3 }).ok, false);
+  assert.equal(l.canPlace({ kind: 'porter', x: 3, y: 2 }).ok, true);
+  assert.equal(l.power(), 0);
+  const wanted = () => l.validate().filter((i) => /Zombie Supply Porter/.test(i.message));
+  assert.equal(wanted().length, 0);
+  for (let i = 0; i < 4; i++) l.add({ kind: 'supply_station', x: 5 + (i % 3), y: 6 + (i >> 1) * 2, rot: S });
+  assert.equal(wanted().length, 1); // 4 supply stations need 2 porters
+  l.add({ kind: 'porter', x: 3, y: 2 });
+  assert.equal(wanted().length, 0);
 });

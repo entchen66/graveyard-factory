@@ -63,6 +63,7 @@ const ENTITY_TOOLS = [
   { id: 'station', name: 'Station', key: 's' },
   { id: 'chest', name: 'Chest', key: 'h' },
   { id: 'supply_station', name: 'Supply station', key: 'l' },
+  { id: 'porter', name: 'Supply porter', key: 'o' },
 ];
 const TOOL_BY_KEY = Object.fromEntries([...TERRAIN_TOOLS, ...ENTITY_TOOLS].map((t) => [t.key, t.id]));
 
@@ -288,6 +289,7 @@ export class Editor {
       case 'splitter': return { kind: 'splitter', x: cell.x, y: cell.y, rot };
       case 'chest': return { kind: 'chest', x: cell.x, y: cell.y, stock: this.opts.chestItem ? [this.opts.chestItem] : [], filters: {} };
       case 'supply_station': return { kind: 'supply_station', x: cell.x, y: cell.y, rot };
+      case 'porter': return { kind: 'porter', x: cell.x, y: cell.y };
       case 'station': {
         const off = Math.floor(STATIONS[stationType].size / 2);
         return { kind: 'station', type: stationType, level, variant, recipe: recipe || null, extensions: [...extensions], x: cell.x - off, y: cell.y - off, rot };
@@ -823,6 +825,7 @@ export class Editor {
       ['Undergrounds / splitters', `${byKind('underground')} / ${byKind('splitter')}`],
       ...Object.entries(STATIONS).map(/** @returns {[string, number]} */ ([id, s]) => [s.name, l.entities.filter((e) => e.kind === 'station' && e.type === id).length]),
       ['Chests', byKind('chest')],
+      ['Supply stations / porters', `${byKind('supply_station')} / ${byKind('porter')}`],
       ['Distributors', byKind('distributor') + byKind('cellar')],
     ];
     const p = l.powerSupply();
@@ -830,7 +833,7 @@ export class Editor {
     beltMaster.checked = l.beltMaster;
     beltMaster.addEventListener('change', () => this.mutate(() => { this.layout.beltMaster = beltMaster.checked; }));
     this.$('stats').replaceChildren(
-      h('span', { class: 'power', title: 'Factory power: 1 per station, belt and chest, 2 per underground conveyor' }, h('img', { src: POWER_ICON, alt: '' }), 'Power'),
+      h('span', { class: 'power', title: 'Factory power: 1 per station and belt, 2 per underground conveyor; chests and porters use none' }, h('img', { src: POWER_ICON, alt: '' }), 'Power'),
       h('b', { class: p.over ? 'over' : '' }, `${p.used} / ${p.available}`),
       h('span', { title: `${p.perZombie} power per zombie; the factory's ${p.carousels} carousels hold ${ZOMBIE_POWER.zombiesPerCarousel} zombies each` }, 'Zombies needed'),
       h('b', { class: p.over ? 'over' : '' }, `${p.zombies} / ${p.maxZombies}`),
@@ -919,7 +922,8 @@ const TOOL_HINT = {
   splitter: 'Takes items from behind and sends them out to both sides.',
   station: 'Stations cannot rotate. R cycles through the four input/output layouts.',
   chest: 'Accepts from any side, outputs to neighbouring belts not pointing in. Filters pick the sides that output.',
-  supply_station: 'Takes "Supply: …" crates from a belt on its input side. The planner puts these near the cell 31,24.',
+  porter: 'Zombie Supply Porter, 1 wide and 2 high: one is needed for every 3 supply stations. The planner puts these along 23,24 to 29,24.',
+  supply_station: 'Takes "Supply: …" crates from a belt on its input side. The planner puts these on or near row 27, x 23–31.',
 };
 
 /** @param {StationType} type @param {string} current @param {number} delta */

@@ -52,6 +52,7 @@ import { UNDERGROUND_LENGTH, UNDERGROUND_GAP } from '../catalog.js';
  * @property {RouteStart[]} starts
  * @property {Map<number, RouteTarget>} targets
  * @property {boolean} [flexChest] end by placing a chest on any suitable free cell
+ * @property {boolean} [noPass] never put a chest in the line ("Supply: ..." items can't enter chests)
  * @property {Set<number>} allow reserved cells this route may use
  * @property {Map<number, number>} [exempt] cell -> rotation mask (belts allowed next to chests)
  * @property {number[] | null} [goalCells] for the A* heuristic
@@ -59,7 +60,7 @@ import { UNDERGROUND_LENGTH, UNDERGROUND_GAP } from '../catalog.js';
 
 /** @typedef {{ k: number, d: number, type: RouteEnd['type'] | 'newChest' }} RouteGoal */
 
-/** A piece placed in cell k, entered travelling din; act 0-3: belt rot, 4 + d: underground. @typedef {{ k: number, din: number, act: number }} RouteStep */
+/** A piece placed in cell k, entered travelling din; act 0-3: belt rot, 4 + d: underground, 8 + r: a chest the line leaves from side r. @typedef {{ k: number, din: number, act: number }} RouteStep */
 
 /**
  * @typedef {object} RoutePath
@@ -73,7 +74,7 @@ import { UNDERGROUND_LENGTH, UNDERGROUND_GAP } from '../catalog.js';
  * A network cell (or a port, k = -1), linked to its neighbours along the item flow.
  * @typedef {object} NetNode
  * @property {number} k
- * @property {'port' | 'splitter' | 'hub' | 'belt' | 'underground' | 'ugExit' | 'chest' | 'supply'} kind
+ * @property {'port' | 'splitter' | 'hub' | 'belt' | 'underground' | 'ugExit' | 'pass' | 'chest' | 'supply'} kind
  * @property {string} [item]
  * @property {number} [rot]
  * @property {number} [din]
@@ -97,6 +98,8 @@ export const COST = {
   splitter: 2,
   hub: 4,
   chest: 3,
+  // A chest in the line, in place of a belt: chests use no power.
+  passChest: 0.5,
 };
 
 export const MAX_STATIONS_PER_BELT = 3;
@@ -117,6 +120,7 @@ export class RouteGrid {
     this.gap = new Int8Array(n).fill(-1);      // rot of the underground whose gap is here
     this.body = new Int8Array(n).fill(-1);     // rot of the underground with a belt cell here
     this.reserved = new Int32Array(n).fill(-1); // port access cell, owner token
+    this.noChest = new Uint8Array(n);           // a station's port access cell (used or not): a chest there would feed it
     // In front of a distributor: the direction back into it. Only a belt or an
     // underground's belt cell may go there, not pointing back
     // (DISTRIBUTOR_FRONT_KINDS); the planner only puts an underground's entry
@@ -245,7 +249,7 @@ export class RouteGrid {
    * @returns {RoutePath | null}
    */
   route(req) {
-    const { starts, targets, flexChest, allow, exempt } = req;
+    const { starts, targets, flexChest, allow, exempt, noPass } = req;
     const round = ++this.round;
     const heap = new MinHeap();
     const hx = req.goalCells?.map((k) => this.xy(k));
@@ -307,6 +311,17 @@ export class RouteGrid {
         const nk = this.step(k, r);
         if (nk < 0) continue;
         push(node(nk, r, 0), g + COST.belt + (r !== d ? COST.turn : 0), n, r);
+      }
+      // Or a chest, which uses no power: where the line turns, or right after an
+      // underground (straight on too). Filtered to the one side it leaves from, so
+      // nothing may already be pushing into the cell, and never on a station's port
+      // access cell (a chest can't feed a station directly).
+      if (!straight && !noPass && this.parent[n] !== -1 && !this.chestFeeds[k] && this.reserved[k] === -1 && !this.noChest[k] && this.chestOk(k, d, allow, true)) {
+        for (const r of [d, (d + 1) % 4, (d + 3) % 4]) {
+          if (r === d && this.action[n] < 4) continue;
+          const nk = this.step(k, r);
+          if (nk >= 0) push(node(nk, r, 1), g + COST.passChest + (r !== d ? COST.turn : 0), n, 8 + r);
+        }
       }
       // Or an underground conveyor, entered from behind (not straight out of a
       // chest: chests only output onto belts).
@@ -385,6 +400,7 @@ export class RouteGrid {
     };
     for (const s of path.steps) {
       if (s.act < 4) claim(s.k, `belt:${s.act & 1}`);
+      else if (s.act >= 8) claim(s.k, 'chest');
       else {
         const d = s.act - 4;
         for (let i = 0; i < UNDERGROUND_LENGTH; i++) {
@@ -397,7 +413,7 @@ export class RouteGrid {
     // outputs, so only their own cell matters. Next to an (unfiltered) output
     // chest, the route's belts may only point into it.
     // Belt cells and their rotation, the undergrounds' included.
-    const beltRot = new Map(path.steps.flatMap((st) => st.act < 4 ? [[st.k, st.act]]
+    const beltRot = new Map(path.steps.flatMap((st) => st.act < 4 ? [[st.k, st.act]] : st.act >= 8 ? []
       : Array.from({ length: UNDERGROUND_LENGTH }, (_, i) => i).filter((i) => i !== UNDERGROUND_GAP).map((i) => [this.step(st.k, st.act - 4, i), st.act - 4])));
     const o = path.start?.origin;
     const first = path.steps[0];
@@ -507,6 +523,11 @@ export class RouteGrid {
         this.rot[s.k] = s.act;
         this.placed.set(s.k, { kind: 'belt', x, y, rot: s.act });
         nodes.push(/** @type {NetNode} */ ({ k: s.k, kind: 'belt', item, rot: s.act, din: s.din }));
+      } else if (s.act >= 8) {
+        // A chest in the line, filtered to the side the line leaves from.
+        this.occ[s.k] = CHEST;
+        this.placed.set(s.k, { kind: 'chest', x, y, stock: [], filters: { [SIDE_NAMES[s.act - 8]]: item }, role: 'pass' });
+        nodes.push(/** @type {NetNode} */ ({ k: s.k, kind: 'pass', item, rot: s.act - 8, din: s.din }));
       } else {
         const d = s.act - 4;
         this.placed.set(s.k, { kind: 'underground', x, y, rot: d });

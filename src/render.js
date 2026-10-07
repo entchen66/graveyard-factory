@@ -362,6 +362,17 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
     ctx.fillStyle = COLORS.chestLid;
     ctx.fillRect(px + m, py + m, cell - 2 * m, (cell - 2 * m) * 0.35);
     drawChestContents(ctx, e, px, py, cell);
+  } else if (e.kind === 'porter') {
+    ctx.fillStyle = '#4b3a5e';
+    ctx.fillRect(px + cell * 0.1, py + cell * 0.1, cell * 0.8, cell * 1.8);
+    ctx.strokeStyle = COLORS.beltArrow;
+    ctx.lineWidth = Math.max(1.5, cell * 0.08);
+    ctx.strokeRect(px + cell * 0.18, py + cell * 0.18, cell * 0.64, cell * 1.64);
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.round(cell * 0.4)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('ZP', px + cell / 2, py + cell);
   } else if (e.kind === 'supply_station') {
     ctx.fillStyle = '#6b4a2b';
     ctx.fillRect(px + cell * 0.1, py + cell * 0.1, cell * 0.8, cell * 0.8);

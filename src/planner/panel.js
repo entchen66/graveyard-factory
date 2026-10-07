@@ -252,7 +252,7 @@ export class PlannerPanel {
       if (r) {
         const st = r.stats;
         const over = st.over ? ` · ${st.over} over the maximum` : '';
-        el.append(h('p', { class: over ? 'error power' : 'hint power', title: `Factory power: 1 per station, belt and chest, 2 per underground conveyor; the maximum comes from the factory's ${ZOMBIE_POWER.carousels} carousels and the Belt Master setting in Stats` },
+        el.append(h('p', { class: over ? 'error power' : 'hint power', title: `Factory power: 1 per station and belt, 2 per underground conveyor; chests and porters use none; the maximum comes from the factory's ${ZOMBIE_POWER.carousels} carousels and the Belt Master setting in Stats` },
           h('img', { src: POWER_ICON, alt: '' }), `Power: ${st.power} / ${st.available} · ${st.zombies} zombies${over}`));
       }
       if (r?.failures.length) {

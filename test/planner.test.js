@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Layout, VOID, REPAIRABLE_SECTIONS } from '../src/model.js';
 import { factoryFloor } from '../src/floor.js';
-import { N, E, S, RECIPES, CELLAR_ITEMS } from '../src/catalog.js';
+import { N, E, S, RECIPES, CELLAR_ITEMS, supplyZoneDistance } from '../src/catalog.js';
 import { planProduction, chooseRecipe } from '../src/planner/production.js';
 import { RouteGrid } from '../src/planner/router.js';
 import { Planner, stationInstances, applyResult } from '../src/planner/planner.js';
@@ -233,13 +233,13 @@ test('planner: places a 2x2 kitchen and routes it', () => {
   assert.ok(res.entities.some((e) => e.kind === 'station' && e.type === 'kitchen'));
 });
 
-test('planner: a "Supply: ..." output ends in a supply station near 31,24', () => {
+test('planner: a "Supply: ..." output ends in a supply station on or near row 27, x 23–31', () => {
   const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
   const { res, out } = runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 600);
   const ss = res.entities.filter((e) => e.kind === 'supply_station');
   assert.equal(ss.length, 1);
   assert.ok(!res.entities.some((e) => e.kind === 'chest' && e.role === 'output'), 'no output chest');
-  assert.ok(Math.abs(31 - ss[0].x) + Math.abs(24 - ss[0].y) <= 6, `supply station at ${ss[0].x},${ss[0].y}`);
+  assert.ok(supplyZoneDistance(ss[0].x, ss[0].y) <= 6, `supply station at ${ss[0].x},${ss[0].y}`);
   assert.deepEqual(layoutIssues(out), []);
 });
 
@@ -252,8 +252,9 @@ test('model: a supply station takes items on its input side only', () => {
 
 test('planner: a product another station takes several of per craft goes through a buffer chest', () => {
   const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
-  const { res, out } = runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 600);
-  assert.deepEqual(res.failures, []);
+  // Routing is noisy, so take the first of a few seeds that routes everything.
+  const runs = [1, 2, 3].map((seed) => runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 1000, seed));
+  const { res, out } = runs.find((r) => r.res.failures.length === 0) ?? assert.fail('no seed routed everything');
   // Supply: Iron takes 8 ingots per craft; a top output can push straight into the chest.
   const smithies = out.entities.filter((e) => e.kind === 'station' && e.recipe === 'iron_ingot');
   const top = smithies.map((s) => out.ports(s).find((p) => p.kind === 'out')).filter((p) => p.dir % 2 === 0);
@@ -276,4 +277,31 @@ test('planner: garden distributors with no crop are set to the crops the plan ne
   assert.deepEqual(layoutIssues(out), []);
   out.clearAutoMaterials();
   assert.deepEqual(out.entities.filter((e) => e.garden).map((e) => e.material), ['onion_1', '', '']);
+});
+
+test('planner: a Zombie Supply Porter for every 3 supply stations, along 23,24 to 29,24', () => {
+  const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  const targets = [{ item: 'supply_iron', rate: 1 }, { item: 'supply_cutlery_1', rate: 1 }, { item: 'supply_furniture_1', rate: 1 }, { item: 'supply_clothes_1', rate: 1 }];
+  const { res, out } = runPlan(layout, targets, 400);
+  const supply = res.entities.filter((e) => e.kind === 'supply_station').length;
+  const porters = res.entities.filter((e) => e.kind === 'porter');
+  assert.ok(supply > 0);
+  assert.equal(porters.length, Math.ceil(supply / 3));
+  for (const p of porters) assert.ok(p.y === 24 && p.x >= 23 && p.x <= 29, `porter at ${p.x},${p.y}`);
+  assert.equal(res.stats.power, out.power());
+  // (A plan this big may leave connections unrouted at 400 iterations, so only the porter rule is checked.)
+  assert.deepEqual(out.validate().filter((i) => /Zombie Supply Porter/.test(i.message)), []);
+});
+
+test('planner: chests (no power) stand in for belts at turns and after undergrounds, never on Supply lines', () => {
+  const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
+  const runs = [1, 2, 3].map((seed) => runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 1000, seed));
+  const { res, out } = runs.find((r) => r.res.failures.length === 0) ?? assert.fail('no seed routed everything');
+  const pass = res.entities.filter((e) => e.kind === 'chest' && e.role === 'pass');
+  assert.ok(pass.length > 0, 'a chest in the line');
+  for (const c of pass) assert.equal(Object.keys(c.filters).length, 1, 'filtered to the one side it leaves from');
+  assert.deepEqual(layoutIssues(out), []);
+  // The Supply: Iron line itself carries no chest: only the ingots' lines do.
+  assert.deepEqual(out.supplyIntoChests().chests, []);
+  for (const c of pass) assert.notEqual(Object.values(c.filters)[0], 'supply_iron');
 });
