@@ -2,7 +2,7 @@
 // Planner side panel: targets, options, production summary, and running the
 // layout search with a live preview on the canvas.
 
-import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, PRODUCTS, POWER_ICON, ZOMBIE_POWER, CELLAR_ITEMS, GARDEN_ITEMS } from '../catalog.js';
+import { STATIONS, ROMAN, ITEM_BY_ID, RECIPES, ITEMS, POWER_ICON, ZOMBIE_POWER, CELLAR_ITEMS, GARDEN_ITEMS } from '../catalog.js';
 import { planProduction, recipesProducing } from './production.js';
 import { applyResult } from './planner.js';
 
@@ -22,7 +22,7 @@ const TIME_CHOICES = [10, 30, 60, 180, 600];
 const DEFAULT_SETTINGS = { targets: [], timeSec: 30, maxLevel: {}, recipeChoice: {} };
 
 // Items a target can be: anything a factory recipe makes.
-const TARGET_ITEMS = PRODUCTS.filter((p) => RECIPES.some((r) => p.id in r.outputs));
+const TARGET_ITEMS = ITEMS.filter((p) => RECIPES.some((r) => p.id in r.outputs));
 
 export class PlannerPanel {
   /**

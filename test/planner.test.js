@@ -334,3 +334,9 @@ test('planner: zombie power comes from Bioreactors fed by the garden', () => {
   assert.deepEqual(layoutIssues(out), []);
   assert.ok(out.entities.some((e) => e.garden && e.material === 'wheat'));
 });
+
+test('planner: Zombie Power can be a final output, made by a Bioreactor', () => {
+  const { res, out } = routedPlan(factoryFloor(REPAIRABLE_SECTIONS), [{ item: 'zombie_power', rate: 1 }], 600);
+  assert.equal(out.entities.filter((e) => e.kind === 'station' && e.type === 'bioreactor').length, 1);
+  assert.deepEqual(layoutIssues(out), []);
+});
