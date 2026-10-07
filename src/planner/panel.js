@@ -288,14 +288,22 @@ const VARIANT_INPUTS = [...GARDEN_ITEMS, ...CELLAR_ITEMS];
 const CROP_VARIANTS = TARGET_ITEMS.map((i) => ({ item: i, recipes: recipesProducing(i.id) }))
   .filter(({ recipes }) => recipes.length > 1 && recipes.every((r) => Object.keys(r.inputs).some((k) => VARIANT_INPUTS.includes(k))));
 
+// The crop or wine a recipe is made from, by name ("Onion ★★★").
+/** @param {import('../types.js').Recipe} r */
+const cropName = (r) => {
+  const id = Object.keys(r.inputs).find((k) => VARIANT_INPUTS.includes(k)) ?? '';
+  return ITEM_BY_ID[id]?.name ?? id;
+};
+
 /**
  * @param {string} value
  * @param {string | undefined} recipe
  * @param {(item: string, recipe?: string) => void} onChange
  */
 function itemSelect(value, recipe, onChange) {
-  const supplies = TARGET_ITEMS.filter((i) => i.id.startsWith('supply_'));
-  const others = TARGET_ITEMS.filter((i) => !i.id.startsWith('supply_'));
+  const byName = (/** @type {Item} */ a, /** @type {Item} */ z) => a.name.localeCompare(z.name);
+  const supplies = TARGET_ITEMS.filter((i) => i.id.startsWith('supply_')).sort(byName);
+  const others = TARGET_ITEMS.filter((i) => !i.id.startsWith('supply_')).sort(byName);
   const s = h('select');
   for (const [label, items] of /** @type {[string, Item[]][]} */ ([['Town supplies', supplies], ['Products', others]])) {
     const g = h('optgroup', { label });
@@ -303,9 +311,8 @@ function itemSelect(value, recipe, onChange) {
       const variants = CROP_VARIANTS.find((v) => v.item === i)?.recipes;
       if (!variants) { g.append(h('option', { value: i.id }, i.name)); continue; }
       g.append(h('option', { value: i.id }, `${i.name} (any crop)`));
-      for (const r of variants) {
-        const crop = Object.keys(r.inputs).find((k) => VARIANT_INPUTS.includes(k)) ?? '';
-        g.append(h('option', { value: `${i.id}|${r.id}` }, `${i.name} (${ITEM_BY_ID[crop]?.name ?? crop})`));
+      for (const r of [...variants].sort((a, z) => cropName(a).localeCompare(cropName(z)))) {
+        g.append(h('option', { value: `${i.id}|${r.id}` }, `${i.name} (${cropName(r)})`));
       }
     }
     s.append(g);
