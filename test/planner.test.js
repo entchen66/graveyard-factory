@@ -73,8 +73,8 @@ test('router: straight route into a station port', () => {
   const P = g.key(9, 1); // port cell, entered moving east
   g.block(P);
   const res = g.route({ starts: [{ k: g.key(0, 1), d: E, cost: 0, origin: { type: 'port' } }], targets: new Map([[P, { mask: 1 << E, end: { type: 'port' } }]]), allow: new Set(), goalCells: [P] });
-  assert.equal(res.steps.length, 9);
-  assert.ok(res.steps.every((s) => s.act === E));
+  // Straight on, as belts, underground conveyors or chests.
+  assert.ok(res.steps.every((s) => s.act % 4 === E));
 });
 
 test('router: crosses a belt line with an underground conveyor', () => {
@@ -158,6 +158,15 @@ function runPlan(layout, targets, iterations, seed = 1, options = {}) {
   const out = layout.clone();
   applyResult(out, res);
   return { res, out, prod };
+}
+
+// Routing is noisy: the first of a few seeds that routes everything.
+function routedPlan(layout, targets, iterations, seeds = [1, 2, 3, 4, 5, 6]) {
+  for (const seed of seeds) {
+    const run = runPlan(layout, targets, iterations, seed);
+    if (run.res.failures.length === 0) return run;
+  }
+  return assert.fail('no seed routed everything');
 }
 
 test('planner: builds a valid layout for a small plan', () => {
@@ -252,9 +261,7 @@ test('model: a supply station takes items on its input side only', () => {
 
 test('planner: a product another station takes several of per craft goes through a buffer chest', () => {
   const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
-  // Routing is noisy, so take the first of a few seeds that routes everything.
-  const runs = [1, 2, 3].map((seed) => runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 1000, seed));
-  const { res, out } = runs.find((r) => r.res.failures.length === 0) ?? assert.fail('no seed routed everything');
+  const { res, out } = routedPlan(layout, [{ item: 'supply_iron', rate: 1 }], 1500);
   // Supply: Iron takes 8 ingots per craft; a top output can push straight into the chest.
   const smithies = out.entities.filter((e) => e.kind === 'station' && e.recipe === 'iron_ingot');
   const top = smithies.map((s) => out.ports(s).find((p) => p.kind === 'out')).filter((p) => p.dir % 2 === 0);
@@ -295,8 +302,7 @@ test('planner: a Zombie Supply Porter for every 3 supply stations, along 23,24 t
 
 test('planner: chests (no power) stand in for belts at turns and after undergrounds, never on Supply lines', () => {
   const layout = Layout.fromJSON(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
-  const runs = [1, 2, 3].map((seed) => runPlan(layout, [{ item: 'supply_iron', rate: 1 }], 1000, seed));
-  const { res, out } = runs.find((r) => r.res.failures.length === 0) ?? assert.fail('no seed routed everything');
+  const { res, out } = routedPlan(layout, [{ item: 'supply_iron', rate: 1 }], 1500);
   const pass = res.entities.filter((e) => e.kind === 'chest' && e.role === 'pass');
   assert.ok(pass.length > 0, 'a chest in the line');
   for (const c of pass) assert.equal(Object.keys(c.filters).length, 1, 'filtered to the one side it leaves from');

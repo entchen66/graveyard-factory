@@ -94,7 +94,8 @@ const SIDE_NAMES = ['N', 'E', 'S', 'W']; // chest filter keys by direction
 export const COST = {
   belt: 1,
   turn: 0.3,
-  underground: UNDERGROUND_LENGTH + 4,
+  // An underground costs 2 power for 5 cells, a bit more than 2 here for the space its body blocks.
+  underground: 3,
   splitter: 2,
   hub: 4,
   chest: 3,

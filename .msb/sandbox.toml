@@ -26,6 +26,7 @@ rule_groups = [
     "claude",
     "github",
     "npm",
+    "python",
 ]
 
 # Allow DNS answers that resolve to private (RFC1918) addresses.
@@ -89,7 +90,12 @@ extra_rules = []
 [bootstrap]
 # Extra apt packages, on top of the always-installed set: socat, jq, curl,
 # ca-certificates, yamllint, shellcheck, python3-yaml.
-packages = []
+packages = [
+    "python3-venv",
+    "python3-pip",
+    "flake8",
+    "mypy",
+]
 
 # bun is off by default — it is a feature of the old devcontainer that nothing
 # currently needs, and a failure fetching it must not stop gitleaks.
