@@ -106,7 +106,7 @@ export const OTHER_ITEMS = Object.entries(OTHER_NAMES).map(([id, name]) => ({ id
 export const ITEMS = [...RAW_MATERIALS, ...EXTERNAL_ITEMS, ...PRODUCTS, ...OTHER_ITEMS];
 
 // In-game icons (76x76, extracted from the game files) in assets/items/<id>.webp.
-// Every item has one; a new item needs its icon added too (see README "Assets").
+// Every item has one; a new item needs its icon added too (see docs/INTERNALS.md "Assets").
 for (const item of ITEMS) item.icon = `assets/items/${item.id}.webp`;
 /** @type {Record<string, Item>} */
 export const ITEM_BY_ID = Object.fromEntries(ITEMS.map((i) => [i.id, i]));
@@ -223,7 +223,7 @@ export const TALENTS = {
 };
 
 // sprites[level][variant]: in-game art at 64x48 px per unit, rendered from the
-// game's station prefabs (see README "Assets"). dx/dy is the sprite's top-left
+// game's station prefabs (see docs/INTERNALS.md "Assets"). dx/dy is the sprite's top-left
 // relative to the footprint's top-left in image pixels, from the prefab geometry;
 // the overhang beyond the footprint (hoppers, chimney) is purely cosmetic.
 // Offsets are listed in the order of the station's variants.

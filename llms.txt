@@ -16,7 +16,7 @@ Use it at https://naerymdan.github.io/graveyard-factory-optimizer/ — source an
 
 ## Docs
 
-- [README](https://github.com/naerymdan/graveyard-factory-optimizer/blob/site/README.md): editor controls, planner algorithm, layout file format, piece rules, game data and how it was extracted.
+- [How it's built](https://github.com/naerymdan/graveyard-factory-optimizer/blob/site/docs/INTERNALS.md): editor controls, planner algorithm, layout file format, piece rules, game data and how it was extracted.
 - [Game data](https://github.com/naerymdan/graveyard-factory-optimizer/blob/site/src/catalog.js): items, recipes, stations, extensions.
 
 ## Legal
