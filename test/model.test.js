@@ -258,14 +258,15 @@ test('factory floor is valid and matches factory.json', () => {
   assert.equal(floor.entities.length, FACTORY_DISTRIBUTORS.length);
   const raw = JSON.parse(fs.readFileSync(new URL('../factory.json', import.meta.url), 'utf8'));
   // factory.json (format 1) sits 12 rows higher. The game's sections give the
-  // same floor, except 4 cells by the east wall that the screenshot shows as wall.
+  // same floor, except 4 cells by the east wall that the screenshot shows as wall
+  // and the 2 cells of a column (FLOOR_HOLES).
   const differ = [];
   for (let y = 0; y < floor.height; y++) {
     for (let x = 0; x < floor.width; x++) {
       if ((raw.terrain[y - 12]?.[x] === '.') !== floor.isFloor(x, y)) differ.push(`${x},${y}`);
     }
   }
-  assert.deepEqual(differ, ['33,36', '34,36', '33,37', '34,37']);
+  assert.deepEqual(differ, ['33,36', '34,36', '33,37', '34,37', '29,41', '30,41']);
   const exported = Layout.fromJSON(raw);
   assert.deepEqual(exported.repaired, DEFAULT_REPAIRED);
   assert.equal(floor.terrainToText(), exported.terrainToText());
@@ -273,9 +274,9 @@ test('factory floor is valid and matches factory.json', () => {
 
 test('floor sections: a cell is floor only when repaired sections cover all of it', () => {
   const floorCells = (/** @type {number[]} */ ids) => factoryFloor(ids).terrain.filter((t) => t === FLOOR).length;
-  assert.equal(floorCells([]), 596);
-  assert.equal(floorCells(DEFAULT_REPAIRED), 838);
-  assert.equal(floorCells(REPAIRABLE_SECTIONS), 1352);
+  assert.equal(floorCells([]), 594);
+  assert.equal(floorCells(DEFAULT_REPAIRED), 836);
+  assert.equal(floorCells(REPAIRABLE_SECTIONS), 1350);
   // Column 10 straddles sections 5 and 6: floor only with both.
   assert.ok(factoryFloor([5]).isFloor(10, 30));
   assert.ok(!factoryFloor([]).isFloor(10, 30));
@@ -547,4 +548,11 @@ test('Zombie Supply Porter: 1 wide, 2 high, 1 power, and one is wanted for every
   assert.equal(wanted().length, 1); // 4 supply stations need 2 porters
   l.add({ kind: 'porter', x: 3, y: 2 });
   assert.equal(wanted().length, 0);
+});
+
+test('a column at 29,41 and 30,41 is not factory floor', () => {
+  const l = Layout.blank(FLOOR_GRID.width, FLOOR_GRID.height);
+  l.setRepaired([]);
+  assert.ok(l.isFloor(28, 41) && l.isFloor(31, 41));
+  assert.ok(!l.isFloor(29, 41) && !l.isFloor(30, 41));
 });

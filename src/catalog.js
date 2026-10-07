@@ -533,6 +533,8 @@ export const FLOOR_SECTIONS = [
   { id: 9, name: 'South', rects: [[10.5, 40.5, 21.5, 53]] },
   { id: 10, name: 'South-east', rects: [[21.5, 40.5, 32, 53]] },
 ];
+// Cells inside a section that aren't factory floor: a column stands there.
+export const FLOOR_HOLES = [{ x: 29, y: 41 }, { x: 30, y: 41 }];
 // The fixed floor plan's grid; every section fits in it.
 export const FLOOR_GRID = { width: 42, height: 55 };
 

@@ -4,7 +4,7 @@
 
 import {
   DIRS, STATIONS, ENTITY_KINDS, RECIPE_BY_ID, ITEM_BY_ID, EXTENSIONS, CHEST_LEVELS, POWER_COST, ZOMBIE_POWER, stationVariants, defaultVariant,
-  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_GARDEN_DISTRIBUTORS, GARDEN_ITEMS, portersFor, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, entityCells, recipesFor, isSupplyItem,
+  BELT_ACCEPTS_FROM_SIDES, UNDERGROUND_GAP_MUST_BE_FLOOR, UNDERGROUND_GAP_KINDS, DISTRIBUTOR_FRONT_KINDS, FACTORY_DISTRIBUTORS, FACTORY_GARDEN_DISTRIBUTORS, GARDEN_ITEMS, portersFor, FACTORY_CELLAR, CELLAR_ITEMS, FLOOR_SECTIONS, FLOOR_GRID, FLOOR_HOLES, entityCells, recipesFor, isSupplyItem,
 } from './catalog.js';
 
 /** @typedef {import('./types.js').Dir} Dir */
@@ -753,7 +753,7 @@ export function sectionFloor(repaired) {
   const out = [];
   for (let y = 0; y < FLOOR_GRID.height; y++) {
     for (let x = 0; x < FLOOR_GRID.width; x++) {
-      out.push(covered(x + 0.25, y + 0.25) && covered(x + 0.75, y + 0.25) && covered(x + 0.25, y + 0.75) && covered(x + 0.75, y + 0.75));
+      out.push(!FLOOR_HOLES.some((h) => h.x === x && h.y === y) && covered(x + 0.25, y + 0.25) && covered(x + 0.75, y + 0.25) && covered(x + 0.25, y + 0.75) && covered(x + 0.75, y + 0.75));
     }
   }
   return out;
