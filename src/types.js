@@ -9,7 +9,7 @@
 /** Terrain cell: '.' floor, ' ' outside. @typedef {string} Terrain */
 
 /** @typedef {'belt' | 'underground' | 'splitter' | 'chest' | 'distributor' | 'cellar' | 'station' | 'supply_station' | 'porter'} EntityKind */
-/** @typedef {'assembly_bench' | 'smithy' | 'kitchen'} StationType */
+/** @typedef {'assembly_bench' | 'smithy' | 'kitchen' | 'bioreactor'} StationType */
 
 /**
  * A placed piece. One shape for every kind; the kind decides which optional
@@ -74,6 +74,7 @@
  * @property {string} short
  * @property {string} color
  * @property {number} size footprint side in cells
+ * @property {number} [height] footprint rows, when it isn't `size` (a Bioreactor is `size` 2 wide and 3 high)
  * @property {number[]} levels
  * @property {'gear' | 'hammer' | 'wheat'} talent
  * @property {Record<string, StationVariant>} variants

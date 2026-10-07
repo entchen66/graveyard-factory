@@ -28,7 +28,7 @@
 /** One image of a conveyor/chest: cell (x, y) plus art offset (dx, dy) in game px. @typedef {{ src: string, x: number, y: number, dx: number, dy: number }} ArtPiece */
 
 import {
-  N, DIRS, STATIONS, ITEMS, ITEM_BY_ID, ROMAN, RECIPE_BY_ID, TALENTS, UNIT_PX, EXTENSION_ART_FRAME, extensionArt, entityBounds, entityCells,
+  N, DIRS, STATIONS, stationDims, ITEMS, ITEM_BY_ID, ROMAN, RECIPE_BY_ID, TALENTS, UNIT_PX, EXTENSION_ART_FRAME, extensionArt, entityBounds, entityCells,
   ART_DIRS, CONVEYOR_ART, CHEST_LEVELS, CHEST_ART_OFFSET, FLOOR_SECTIONS, GARDEN_ITEMS, GARDEN_PICKER,
 } from './catalog.js';
 
@@ -398,14 +398,14 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
       drawItem(ctx, id, px + cell * cx, py + cell * cy, s);
     });
   } else if (e.kind === 'station' && usesSprite(e)) {
-    const def = STATIONS[e.type], sprite = spriteFor(e), img = SPRITES[sprite.src], size = def.size * cell;
+    const def = STATIONS[e.type], sprite = spriteFor(e), img = SPRITES[sprite.src], { w, h } = stationDims(e.type);
     const sx = cell / UNIT_PX.w, sy = cell / UNIT_PX.h;
     // Highlight: the station colour as a rounded square behind the art. The art
     // itself is always drawn opaque (even for unlocked stations) so the square
     // never shows through it.
     const m = cell * 0.08;
     ctx.fillStyle = def.color;
-    roundRect(ctx, px + m, py + m, size - 2 * m, size - 2 * m, cell * 0.25);
+    roundRect(ctx, px + m, py + m, w * cell - 2 * m, h * cell - 2 * m, cell * 0.25);
     ctx.fill();
     ctx.save();
     ctx.globalAlpha = prevAlpha;
@@ -417,13 +417,13 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
       if (ready(art)) ctx.drawImage(art, px + EXTENSION_ART_FRAME.dx * sx, py + EXTENSION_ART_FRAME.dy * sy, art.naturalWidth * sx, art.naturalHeight * sy);
     }
     ctx.restore();
-    drawStationLabel(ctx, e, px, py, size, cell);
+    drawStationLabel(ctx, e, px, py, w * cell, cell);
   } else if (e.kind === 'station') {
     const def = STATIONS[e.type];
-    const s = def.size * cell;
+    const { w, h } = stationDims(e.type);
     const m = cell * 0.08;
     ctx.fillStyle = def.color;
-    roundRect(ctx, px + m, py + m, s - 2 * m, s - 2 * m, cell * 0.25);
+    roundRect(ctx, px + m, py + m, w * cell - 2 * m, h * cell - 2 * m, cell * 0.25);
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
     ctx.lineWidth = 1.5;
@@ -433,8 +433,8 @@ export function drawEntity(ctx, layout, e, cell, { dim }) {
     ctx.textBaseline = 'middle';
     ctx.font = `600 ${Math.max(8, cell * 0.5)}px system-ui, sans-serif`;
     ctx.font = `600 ${Math.max(8, cell * 0.34)}px system-ui, sans-serif`;
-    ctx.fillText(def.name, px + s / 2, py + cell * 0.55);
-    drawStationLabel(ctx, e, px, py, s, cell);
+    ctx.fillText(def.name, px + w * cell / 2, py + cell * 0.55);
+    drawStationLabel(ctx, e, px, py, w * cell, cell);
   }
   ctx.globalAlpha = prevAlpha;
 }
@@ -816,7 +816,7 @@ function drawStationLabel(ctx, e, px, py, size, cell) {
   ctx.font = `600 ${Math.max(8, cell * 0.3)}px system-ui, sans-serif`;
   const text = ellipsize(ctx, `${ROMAN[e.level] ?? e.level} · ${product}`, size - cell * 0.3);
   const w = ctx.measureText(text).width + cell * 0.3;
-  const x = px + (size - w) / 2, y = py + (size - hgt) / 2;
+  const x = px + (size - w) / 2, y = py + (stationDims(e.type).h * cell - hgt) / 2;
   ctx.fillStyle = 'rgba(15,17,22,0.8)';
   roundRect(ctx, x, y, w, hgt, hgt / 2);
   ctx.fill();
@@ -824,7 +824,7 @@ function drawStationLabel(ctx, e, px, py, size, cell) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, px + size / 2, y + hgt / 2 + 0.5);
-  if (recipe && cell >= 16) drawTalentChip(ctx, def.talent, recipe.talent, px + size / 2, y + hgt + cell * 0.08, cell);
+  if (recipe && recipe.talent > 0 && cell >= 16) drawTalentChip(ctx, def.talent, recipe.talent, px + size / 2, y + hgt + cell * 0.08, cell);
 }
 
 // "5 [gear]" under the label: the worker talent level the recipe needs.

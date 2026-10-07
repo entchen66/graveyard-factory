@@ -161,9 +161,9 @@ function runPlan(layout, targets, iterations, seed = 1, options = {}) {
 }
 
 // Routing is noisy: the first of a few seeds that routes everything.
-function routedPlan(layout, targets, iterations, seeds = [1, 2, 3, 4, 5, 6]) {
+function routedPlan(layout, targets, iterations, seeds = [1, 2, 3, 4, 5, 6], options = {}) {
   for (const seed of seeds) {
-    const run = runPlan(layout, targets, iterations, seed);
+    const run = runPlan(layout, targets, iterations, seed, options);
     if (run.res.failures.length === 0) return run;
   }
   return assert.fail('no seed routed everything');
@@ -323,4 +323,14 @@ test('planner: a target can name its recipe, and the crop comes from the garden'
   const prod = planProduction([{ item: 'supply_preserves_2', rate: 1, recipe: 'supply_preserves_2_onion_1' }], { distributors: garden });
   assert.equal(prod.supply.onion_1.source, 'distributor');
   assert.equal(prod.supply.pumpkin_3, undefined);
+});
+
+test('planner: zombie power comes from Bioreactors fed by the garden', () => {
+  const layout = factoryFloor(REPAIRABLE_SECTIONS);
+  const { res, out } = routedPlan(layout, [{ item: 'supply_appliances_1', rate: 1 }], 1200, undefined, { distributors: new Set([...distributorsOf(layout), ...GARDEN_ITEMS]) });
+  const bio = out.entities.filter((e) => e.kind === 'station' && e.type === 'bioreactor');
+  assert.equal(bio.length, 1);
+  assert.deepEqual(res.failures, []);
+  assert.deepEqual(layoutIssues(out), []);
+  assert.ok(out.entities.some((e) => e.garden && e.material === 'wheat'));
 });

@@ -6,7 +6,7 @@
 // route costs (belts, turns, undergrounds, splitters, chests) plus a large
 // penalty per connection that could not be routed.
 
-import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, GARDEN_ITEMS, entityCells, stationVariants, isSupplyItem, supplyZoneDistance, PORTER, portersFor } from '../catalog.js';
+import { STATIONS, RECIPE_BY_ID, DIRS, ENTITY_KINDS, CELLAR_ITEMS, GARDEN_ITEMS, entityCells, stationDims, stationVariants, isSupplyItem, supplyZoneDistance, PORTER, portersFor } from '../catalog.js';
 import { RouteGrid, DX, DY, COST } from './router.js';
 import { powerOf, powerSupply } from '../model.js';
 
@@ -98,17 +98,18 @@ const SUPPLY_CORNER_COST = 1;
 const SUPPLY_CANDIDATES = 40;
 // Extra cost of a buffered output (see `Edge.buffer`) that has no chest: only when a chest can't fit.
 const BUFFER_MISS_COST = 30;
-const sizeOf = (/** @type {StationInstance} */ s) => STATIONS[s.type].size;
+const sizeOf = (/** @type {StationInstance} */ s) => stationDims(s.type);
 const variantsOf = (/** @type {StationInstance} */ s) => Object.keys(stationVariants(s.type));
 // Do two station footprints come closer than `gap` free cells?
 /**
  * @param {{ x: number, y: number }} a
- * @param {number} sa
+ * @param {{ w: number, h: number }} sa
  * @param {{ x: number, y: number }} b
- * @param {number} sb
+ * @param {{ w: number, h: number }} sb
  * @param {number} gap
  */
-const near = (a, sa, b, sb, gap) => a.x < b.x + sb + gap && b.x < a.x + sa + gap && a.y < b.y + sb + gap && b.y < a.y + sa + gap;
+const near = (a, sa, b, sb, gap) => a.x < b.x + sb.w + gap && b.x < a.x + sa.w + gap && a.y < b.y + sb.h + gap && b.y < a.y + sa.h + gap;
+const dimsKey = (/** @type {{ w: number, h: number }} */ d) => `${d.w}x${d.h}`;
 const rev = (/** @type {number} */ d) => (d + 2) % 4;
 
 // One entry per station to build, with the ingredients it needs per minute.
@@ -242,16 +243,16 @@ export class Planner {
     this._reservePorters(g);
     this.base = g;
     // Footprint positions free of obstacles, per station size.
-    /** @type {Record<number, { x: number, y: number }[]>} */
+    /** @type {Record<string, { x: number, y: number }[]>} */
     this.spots = {};
     const free = (/** @type {number} */ k) => g.floor[k] && g.occ[k] === 0 && g.reserved[k] === -1 && g.gap[k] === -1;
-    for (const size of new Set(this.stations.map(sizeOf))) {
+    for (const size of new Map(this.stations.map((s) => [dimsKey(sizeOf(s)), sizeOf(s)])).values()) {
       /** @type {{ x: number, y: number }[]} */
-      const spots = this.spots[size] = [];
-      for (let y = 0; y + size <= l.height; y++) {
-        for (let x = 0; x + size <= l.width; x++) {
+      const spots = this.spots[dimsKey(size)] = [];
+      for (let y = 0; y + size.h <= l.height; y++) {
+        for (let x = 0; x + size.w <= l.width; x++) {
           let ok = true;
-          for (let dy = 0; dy < size && ok; dy++) for (let dx = 0; dx < size && ok; dx++) ok = free(g.key(x + dx, y + dy));
+          for (let dy = 0; dy < size.h && ok; dy++) for (let dx = 0; dx < size.w && ok; dx++) ok = free(g.key(x + dx, y + dy));
           if (ok) spots.push({ x, y });
         }
       }
@@ -405,7 +406,11 @@ export class Planner {
       const x = p.x + q.x, y = p.y + q.y;
       return { x, y, dir: q.dir, nx: x + DX[q.dir], ny: y + DY[q.dir] };
     };
-    const inputs = s.ingredients.map((ing, i) => ({ ...at(ins[p.swap ? 1 - i : i]), item: ing.item, port: p.swap ? 1 - i : i }));
+    // A swap exchanges the input ports (a station with one has nothing to exchange).
+    const inputs = s.ingredients.map((ing, i) => {
+      const port = p.swap ? ins.length - 1 - i : i;
+      return { ...at(ins[port]), item: ing.item, port };
+    });
     return { inputs, output: at(out) };
   }
 
@@ -424,8 +429,8 @@ export class Planner {
       return g.floor[k] && g.occ[k] === 0 && g.reserved[k] === -1 && g.gap[k] === -1;
     };
     const size = sizeOf(s);
-    for (let dy = 0; dy < size; dy++) {
-      for (let dx = 0; dx < size; dx++) {
+    for (let dy = 0; dy < size.h; dy++) {
+      for (let dx = 0; dx < size.w; dx++) {
         if (!cellFree(p.x + dx, p.y + dy) || this.apron[g.key(p.x + dx, p.y + dy)]) return false;
       }
     }
@@ -480,7 +485,7 @@ export class Planner {
     const outputs = placed.map((o) => ({ item: o.s.item, port: this.ports(o.s, o.p).output }));
     /** @type {Placement | null} */
     let best = null, bestCost = Infinity;
-    for (const spot of this.spots[sizeOf(s)]) {
+    for (const spot of this.spots[dimsKey(sizeOf(s))]) {
       for (const variant of variantsOf(s)) {
         for (const swap of [false, true]) {
           const p = { x: spot.x, y: spot.y, variant, swap };
@@ -594,7 +599,7 @@ export class Planner {
         failures.push({ reason: 'no room', station: i });
         return;
       }
-      for (let dy = 0; dy < sizeOf(s); dy++) for (let dx = 0; dx < sizeOf(s); dx++) g.block(g.key(p.x + dx, p.y + dy));
+      for (let dy = 0; dy < sizeOf(s).h; dy++) for (let dx = 0; dx < sizeOf(s).w; dx++) g.block(g.key(p.x + dx, p.y + dy));
       for (const q of stationVariants(s.type)[p.variant].ports) {
         const k = g.step(g.key(p.x + q.x, p.y + q.y), q.dir);
         if (k >= 0) g.noChest[k] = 1;
@@ -792,7 +797,7 @@ export class Planner {
         const r = 1 + Math.floor(this.random() * 6);
         p = { ...cur, x: cur.x + Math.round((this.random() * 2 - 1) * r), y: cur.y + Math.round((this.random() * 2 - 1) * r) };
       } else {
-        const spots = this.spots[sizeOf(s)];
+        const spots = this.spots[dimsKey(sizeOf(s))];
         const spot = spots[Math.floor(this.random() * spots.length)];
         if (!spot) return null;
         p = { x: spot.x, y: spot.y, variant: cur?.variant ?? variantsOf(s)[0], swap: cur?.swap ?? false };

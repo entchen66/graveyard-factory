@@ -2,7 +2,7 @@
 // Interactive floor-plan editor: tools, input handling, side panels, history.
 
 import {
-  DIRS, STATIONS, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
+  DIRS, STATIONS, stationDims, stationVariants, defaultVariant, ROMAN, RAW_MATERIALS, EXTERNAL_ITEMS, PRODUCTS, OTHER_ITEMS,
   ITEM_BY_ID, ENTITY_KINDS, CELLAR_ITEMS, GARDEN_ITEMS, GARDEN_PICKER, RECIPE_BY_ID, TALENTS, EXTENSIONS, CHEST_LEVELS, EXTENSION_SLOTS, POWER_ICON, BELT_MASTER_ICON, ZOMBIE_POWER, FLOOR_SECTIONS, extensionsFor, recipesFor, entityBounds,
 } from './catalog.js';
 import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
@@ -337,8 +337,8 @@ export class Editor {
       case 'supply_station': return { kind: 'supply_station', x: cell.x, y: cell.y, rot };
       case 'porter': return { kind: 'porter', x: cell.x, y: cell.y };
       case 'station': {
-        const off = Math.floor(STATIONS[stationType].size / 2);
-        return { kind: 'station', type: stationType, level, variant, recipe: recipe || null, extensions: [...extensions], x: cell.x - off, y: cell.y - off, rot };
+        const { w, h } = stationDims(stationType);
+        return { kind: 'station', type: stationType, level, variant, recipe: recipe || null, extensions: [...extensions], x: cell.x - Math.floor(w / 2), y: cell.y - Math.floor(h / 2), rot };
       }
       default: return null;
     }

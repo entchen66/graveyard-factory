@@ -193,6 +193,26 @@ export const KITCHEN_VARIANTS = {
   },
 };
 
+// The Bioreactor is 2 wide and 3 high, with one input in the middle row on one
+// side and the output in the middle row on the other (confirmed by the user); it
+// flips left to right.
+//
+//   in_left    in_right
+//    . .        . .
+//    >. >       < .<
+//    . .        . .
+/** @type {Record<string, StationVariant>} */
+export const BIOREACTOR_VARIANTS = {
+  in_left: {
+    name: 'Input left, output right',
+    ports: [{ kind: 'in', x: 0, y: 1, dir: W }, { kind: 'out', x: 1, y: 1, dir: E }],
+  },
+  in_right: {
+    name: 'Input right, output left',
+    ports: [{ kind: 'in', x: 1, y: 1, dir: E }, { kind: 'out', x: 0, y: 1, dir: W }],
+  },
+};
+
 // Worker talents a station uses. A recipe's `talent` is the level of it the
 // station's worker needs (the game's craft talentLock).
 /** @type {Record<StationDef['talent'], TalentDef>} */
@@ -244,7 +264,15 @@ export const STATIONS = {
       2: [[-7, -57], [-9, -57], [-22, -22], [-22, -22]],
     }),
   },
+  // One level, no extensions, and no worker talent needed (the wheat icon is just its display talent).
+  bioreactor: {
+    name: 'Bioreactor', short: 'BIO', color: '#7fc241', size: 2, height: 3, levels: [1], talent: 'wheat',
+    variants: BIOREACTOR_VARIANTS, defaultVariant: 'in_left',
+    sprites: stationSprites('bioreactor', BIOREACTOR_VARIANTS, { 1: [[-22, -50], [-20, -50]] }),
+  },
 };
+/** Footprint width and height of a station type, in cells. @type {(type: StationType) => { w: number, h: number }} */
+export const stationDims = (type) => ({ w: STATIONS[type].size, h: STATIONS[type].height ?? STATIONS[type].size });
 /** @type {(type: StationType) => Record<string, StationVariant>} */
 export const stationVariants = (type) => STATIONS[type]?.variants ?? STATION_VARIANTS;
 /** @type {(type: StationType) => string} */
@@ -305,6 +333,7 @@ const R = (id, station, levels, inputs, outputs, time, talent, tech, extension =
   ({ id, station, levels, inputs, outputs, time, talent, tech, extension });
 /** @type {Recipe[]} */
 export const RECIPES = [
+  R('zombie_power', 'bioreactor', [1], { wheat: 5 }, { zombie_power: 1 }, 10, 0, 'Bioreactor'),
   R('supply_iron', 'assembly_bench', [1, 2, 3], { iron_ingot: 8 }, { supply_iron: 1 }, 10, 2, 'Check station access'),
   R('wooden_kit_1_nails', 'assembly_bench', [1, 2, 3], { wood_log: 1, bronze_nails: 4 }, { wooden_kit_1: 4 }, 12, 2, 'Assembly bench'),
   R('wooden_kit_1', 'assembly_bench', [1, 2, 3], { wood_log: 1 }, { wooden_kit_1: 4 }, 14, 3, 'Assembly bench: Auto-hammer', 'auto_hammer'),
@@ -597,9 +626,9 @@ export const UNDERGROUND_GAP = 2; // index of the gap cell along the conveyor
  */
 export function entityCells(e) {
   if (e.kind === 'station') {
-    const s = STATIONS[e.type].size;
+    const { w, h } = stationDims(e.type);
     const cells = [];
-    for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) cells.push({ x: e.x + dx, y: e.y + dy, gap: false });
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) cells.push({ x: e.x + dx, y: e.y + dy, gap: false });
     return cells;
   }
   if (e.kind === 'underground') {

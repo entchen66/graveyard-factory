@@ -151,11 +151,26 @@ test('recipe data is consistent', () => {
     assert.ok(Object.keys(r.inputs).length <= 2, `${r.id} needs more than 2 input types`);
     assert.ok(r.levels.every((lv) => STATIONS[r.station].levels.includes(lv)), `${r.id}: bad level`);
   }
-  assert.equal(RECIPES.length, 67);
+  assert.equal(RECIPES.length, 68);
   for (const r of RECIPES) {
-    assert.ok(r.time > 0 && r.talent > 0, `${r.id}: time and talent from the game data`);
+    assert.ok(r.time > 0 && (r.talent > 0 || r.station === 'bioreactor'), `${r.id}: time and talent from the game data`);
     if (r.extension) assert.equal(EXTENSIONS[r.extension]?.station, r.station, `${r.id}: extension ${r.extension}`);
   }
+});
+
+test('bioreactor is 2 wide and 3 high with its ports in the middle row, and flips', () => {
+  const l = Layout.blank(8, 8);
+  const b = l.add({ kind: 'station', type: 'bioreactor', level: 1, x: 2, y: 2, recipe: 'zombie_power' });
+  assert.equal(b.variant, 'in_left');
+  assert.equal(l.footprint(b).length, 6);
+  assert.deepEqual(l.entityAt(3, 4)?.id, b.id);
+  assert.equal(l.entityAt(4, 3), null);
+  const at = (p) => [p.kind, p.nx, p.ny];
+  assert.deepEqual(l.ports(b).map(at), [['in', 1, 3], ['out', 4, 3]]);
+  l.update(b.id, { variant: 'in_right' });
+  assert.deepEqual(l.ports(b).map(at), [['in', 4, 3], ['out', 1, 3]]);
+  const r = RECIPES.find((x) => x.id === 'zombie_power');
+  assert.deepEqual([r.inputs, r.outputs, r.time], [{ wheat: 5 }, { zombie_power: 1 }, 10]);
 });
 
 test('kitchen is 2x2 with inputs on top or on a side', () => {
