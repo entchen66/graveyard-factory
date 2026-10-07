@@ -38,6 +38,7 @@ The app is entirely static (HTML, CSS, ES modules, a module Web Worker, WebP ima
 | `src/model.js` | `Layout`: terrain grid, entities, placement rules, ports, validation, JSON load/save and migration. No DOM, so it also runs under Node. |
 | `src/render.js` | Canvas drawing: terrain, background, entities, sprites, icons and overlays. |
 | `src/editor.js` | Tools, mouse/keyboard input, side panels, undo/redo and autosave. |
+| `src/share.js` | The layout as a URL query value (`?f=`): deflate-raw and base64url of the layout JSON, without what the sections rebuild (terrain, plain distributors). DOM-free. |
 | `src/background.js` | Background image and its alignment to the grid. |
 | `src/floor.js` | The real factory floor: the game's floor sections (`FLOOR_SECTIONS` in the catalog) and the distribution stations. Used on first launch and kept by **Clear**. |
 | `src/main.js` | Entry point. |
@@ -77,6 +78,7 @@ The app is entirely static (HTML, CSS, ES modules, a module Web Worker, WebP ima
 - **Chests, distributors, the cellar and the chest inspector** show item icons (a coloured dot if an icon is missing).
 - **Power**: the Stats panel starts with the layout's factory power (the yellow gear) used / available: 1 per station and conveyor belt, 2 per underground conveyor, none for chests and porters (`POWER_COST` in `src/catalog.js`). Power comes from zombies on the factory's 5 zombie carousels, which are fixed (none can be built): 4 zombies each, so at most 20 zombies, each giving 7 power (10 with the **Belt Master** perk, a checkbox in Stats saved with the layout). That's a maximum of 140 power, or 200 with Belt Master. Stats also shows the zombies needed out of 20; going over the maximum is a warning. The planner shows its result's power against the maximum.
 - Autosaves to localStorage. Import/Export JSON to keep files.
+- **Share links**: the address bar always holds the factory as `?f=…` (updated shortly after each change), and **Copy link** copies it. Opening such a link loads that factory instead of the saved one (and replaces the saved one once edited; undo history starts empty). A 140-piece plan is about 2 kB of URL. Planner previews aren't included, only the layout and the planner settings.
 - The Issues panel lists validation problems: entities off the floor, ports facing off the floor, belts facing each other, pieces fed from a side with no input, chests placed against station inputs or against a station's side output, missing materials, invalid recipes, missing or clashing extensions. Errors and warnings are also outlined on the canvas; info notes such as "no recipe" appear only in the panel.
 - **Locked** entities are ones the planner must keep. Unlocked entities (including everything the planner places) are drawn slightly faded, except station art.
 

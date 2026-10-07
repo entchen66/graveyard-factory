@@ -9,6 +9,7 @@ import { Layout, VOID, FLOOR, terrainName, describeEntity } from './model.js';
 import { drawLayout, loadArt } from './render.js';
 import { factoryFloor } from './floor.js';
 import { Background } from './background.js';
+import { SHARE_PARAM, encodeLayout, decodeLayout } from './share.js';
 import { PlannerPanel } from './planner/panel.js';
 
 /** @typedef {import('./types.js').Entity} Entity */
@@ -96,6 +97,8 @@ export class Editor {
     this.redoStack = [];
     /** @type {Issue[]} */
     this.issues = [];
+    /** @type {ReturnType<typeof setTimeout>} */
+    this.shareTimer = undefined;
     /** @type {number | null} floor section highlighted on the canvas */
     this.hoverSection = null;
     this.layout = this.loadSaved() ?? factoryFloor();
@@ -114,6 +117,7 @@ export class Editor {
     this.planner = new PlannerPanel(this, this.$('planner'));
     this.setTool('select');
     this.changed({ save: false });
+    this.loadShared();
   }
 
   // ---- state & history -----------------------------------------------------
@@ -186,6 +190,48 @@ export class Editor {
 
   save() {
     try { localStorage.setItem(STORAGE_KEY, this.snapshot()); } catch { /* storage unavailable */ }
+    this.updateShareUrl();
+  }
+
+  // The address bar always holds the layout (`?f=`), so copying it shares the factory.
+  updateShareUrl() {
+    clearTimeout(this.shareTimer);
+    this.shareTimer = setTimeout(async () => {
+      const url = new URL(location.href);
+      url.searchParams.set(SHARE_PARAM, await encodeLayout(this.layout));
+      history.replaceState(null, '', url);
+    }, 400);
+  }
+
+  // A shared link replaces what's saved in this browser once the layout is edited
+  // (the first save), so it stays out of the undo history.
+  async loadShared() {
+    const param = new URL(location.href).searchParams.get(SHARE_PARAM);
+    if (!param) { this.updateShareUrl(); return; }
+    try {
+      this.layout = await decodeLayout(param);
+      this.undoStack = [];
+      this.redoStack = [];
+      this.selectedId = null;
+      this.changed({ save: false });
+      this.fit();
+      this.status('Loaded the shared factory');
+    } catch (err) {
+      this.status(`The link's factory couldn't be loaded: ${/** @type {Error} */ (err).message}`, true);
+      this.updateShareUrl();
+    }
+  }
+
+  async copyShareLink() {
+    const url = new URL(location.href);
+    url.searchParams.set(SHARE_PARAM, await encodeLayout(this.layout));
+    history.replaceState(null, '', url);
+    try {
+      await navigator.clipboard.writeText(url.href);
+      this.status('Link copied');
+    } catch {
+      this.status('Copy the address bar to share this factory');
+    }
   }
 
   loadSaved() {
@@ -569,6 +615,7 @@ export class Editor {
       clear: () => this.clear(),
       import: () => this.$('import-file').click(),
       export: () => this.exportJSON(),
+      share: () => this.copyShareLink(),
       undo: () => this.undo(),
       redo: () => this.redo(),
       fit: () => this.fit(),

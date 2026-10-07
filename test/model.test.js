@@ -556,3 +556,23 @@ test('a column at 29,41 and 30,41 is not factory floor', () => {
   assert.ok(l.isFloor(28, 41) && l.isFloor(31, 41));
   assert.ok(!l.isFloor(29, 41) && !l.isFloor(30, 41));
 });
+
+test('a layout survives a share link, and the link stays short', async () => {
+  const { encodeLayout, decodeLayout } = await import('../src/share.js');
+  const l = factoryFloor(REPAIRABLE_SECTIONS);
+  l.update(l.entities.find((e) => e.garden).id, { material: 'onion_3' });
+  l.add({ kind: 'belt', x: 5, y: 5, rot: E });
+  l.add({ kind: 'station', x: 8, y: 8, type: 'assembly_bench', level: 1, recipe: 'building_kit_1' });
+  l.planner = { targets: [{ item: 'supply_preserves_2', rate: 1, recipe: 'supply_preserves_2_onion_3' }], timeSec: 30, maxLevel: {}, recipeChoice: {} };
+  const text = await encodeLayout(l);
+  assert.match(text, /^[\w-]+$/);
+  assert.ok(text.length < 1500, `${text.length} chars`);
+  const back = await decodeLayout(text);
+  const strip = (/** @type {Layout} */ x) => { const j = x.toJSON(); return { ...j, entities: j.entities.map(({ id, ...e }) => JSON.stringify(e)).sort() }; };
+  assert.deepEqual(strip(back), strip(l));
+  assert.equal(back.entities.find((e) => e.garden && e.x === 1).material, 'onion_3');
+  // A custom floor (no sections) keeps its own terrain.
+  const custom = Layout.blank(6, 5);
+  custom.setTerrain(1, 1, FLOOR);
+  assert.equal((await decodeLayout(await encodeLayout(custom))).terrainToText(), custom.terrainToText());
+});
