@@ -10,7 +10,7 @@ export const BACKGROUND = {
   unitW: UNIT_PX.w,
   unitH: UNIT_PX.h,
   offsetX: 226,
-  offsetY: 72,
+  offsetY: 332,
   opacity: 1,
 };
 
