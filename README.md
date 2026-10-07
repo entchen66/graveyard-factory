@@ -1,6 +1,6 @@
 # Graveyard Keeper 2 factory planner
 
-**Use it in your browser: <https://naerymdan.github.io/graveyard-factory-optimizer/>** — nothing to install, no account; it saves in your browser and runs entirely on that page.
+**Use it in your browser: <https://graveyard-factory.runoverlabs.dev/>** — nothing to install, no account; it saves in your browser and runs entirely on that page.
 
 A layout editor and automatic planner for the conveyor factory in Graveyard Keeper 2. Draw belts, stations and chests on the factory's real floor, or give the planner the items you want per minute and let it work out the stations, place them and lay the belts.
 
@@ -8,7 +8,7 @@ A layout editor and automatic planner for the conveyor factory in Graveyard Keep
 
 ## Using the site
 
-Open <https://naerymdan.github.io/graveyard-factory-optimizer/>.
+Open <https://graveyard-factory.runoverlabs.dev/>.
 
 - **Edit by hand.** Pick a tool on the left (belt, underground, splitter, station, chest and so on, or press its key), click or drag on the floor. `R` rotates, `Del` deletes, Ctrl+Z / Ctrl+Y undo and redo, the wheel zooms and middle-drag pans. The Issues panel lists anything that breaks the game's rules.
 - **Let the planner do it.** In the Planner panel on the right, add the final outputs you want per minute (for example "Supply: Preserves II (Onion ★★★)"), press **Generate layout** and watch the search run, then **Apply** to add the result to your layout.
@@ -19,15 +19,15 @@ It's an unofficial fan tool; see the disclaimer above.
 
 ## Contributing
 
-Pull requests and issues are welcome at <https://github.com/naerymdan/graveyard-factory-optimizer>. How it works inside is in [docs/INTERNALS.md](docs/INTERNALS.md); the ground rules for changes are in [AGENTS.md](AGENTS.md) (written for coding agents, but they apply to everyone).
+Pull requests and issues are welcome at <https://github.com/runoverlabs/graveyard-factory>. How it works inside is in [docs/INTERNALS.md](docs/INTERNALS.md); the ground rules for changes are in [AGENTS.md](AGENTS.md) (written for coding agents, but they apply to everyone).
 
 ### Development setup
 
 There's no build step and no runtime dependency: the app is plain ES modules that the browser loads as they are, so it has to be served over HTTP (opening `index.html` from disk won't work). You need Node 22+ for the tests and Python 3 to serve.
 
 ```sh
-git clone https://github.com/naerymdan/graveyard-factory-optimizer.git
-cd graveyard-factory-optimizer
+git clone https://github.com/runoverlabs/graveyard-factory.git
+cd graveyard-factory
 npm start         # python3 -m http.server 8000, then open http://localhost:8000
 npm test          # unit tests for the model, game data and planner (Node 22+)
 npm run typecheck # JSDoc types, checked by TypeScript (fetched by npx; not a dependency)

@@ -2,7 +2,7 @@
 
 > Free, unofficial browser tool for planning the conveyor factory in the video game Graveyard Keeper 2 (Lazy Bear Games / tinyBuild). It is a floor-plan editor with the game's art plus an automatic planner: give it target outputs per minute and it chooses recipes, counts the smithies, assembly benches and kitchens needed, places them on the real factory floor and routes the conveyor belts. Runs entirely in the browser; no account, no install. The address always holds the factory, so sharing the URL shares the layout.
 
-Use it at https://naerymdan.github.io/graveyard-factory-optimizer/ — source and full documentation at https://github.com/naerymdan/graveyard-factory-optimizer.
+Use it at https://graveyard-factory.runoverlabs.dev/ — source and full documentation at https://github.com/runoverlabs/graveyard-factory.
 
 ## What it covers
 
@@ -16,8 +16,8 @@ Use it at https://naerymdan.github.io/graveyard-factory-optimizer/ — source an
 
 ## Docs
 
-- [How it's built](https://github.com/naerymdan/graveyard-factory-optimizer/blob/site/docs/INTERNALS.md): editor controls, planner algorithm, layout file format, piece rules, game data and how it was extracted.
-- [Game data](https://github.com/naerymdan/graveyard-factory-optimizer/blob/site/src/catalog.js): items, recipes, stations, extensions.
+- [How it's built](https://github.com/runoverlabs/graveyard-factory/blob/site/docs/INTERNALS.md): editor controls, planner algorithm, layout file format, piece rules, game data and how it was extracted.
+- [Game data](https://github.com/runoverlabs/graveyard-factory/blob/site/src/catalog.js): items, recipes, stations, extensions.
 
 ## Legal
 
