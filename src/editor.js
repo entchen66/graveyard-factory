@@ -75,6 +75,10 @@ export class Editor {
     this.$ = (id) => root.getElementById(id);
     this.canvas = /** @type {HTMLCanvasElement} */ (this.$('canvas'));
     this.ctx = this.canvas.getContext('2d');
+    /** @type {HTMLCanvasElement | null} */
+    this._backCanvas = null;
+    /** @type {CanvasRenderingContext2D | null} */
+    this._backCtx = null;
     /** @type {View} */
     this.view = { cell: 24, ox: 20, oy: 20, dpr: window.devicePixelRatio || 1 };
     /** @type {string} */
@@ -106,9 +110,12 @@ export class Editor {
     loadArt(() => this.requestDraw());
     /** @type {Layout} */
     this.preview = null; // planner result shown instead of the layout until applied
+    /** @type {string} */
+    this.importFileName = '';
 
     this.buildToolButtons();
     this.bindTopbar();
+    this.bindImportDialog();
     this.bindCanvas();
     this.bindKeyboard();
     new ResizeObserver(() => this.resizeCanvas()).observe(this.$('canvas-wrap'));
@@ -248,8 +255,11 @@ export class Editor {
   resizeCanvas() {
     const wrap = this.$('canvas-wrap');
     this.view.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.max(1, Math.round(wrap.clientWidth * this.view.dpr));
-    this.canvas.height = Math.max(1, Math.round(wrap.clientHeight * this.view.dpr));
+    const targetW = Math.max(1, Math.round(wrap.clientWidth * this.view.dpr));
+    const targetH = Math.max(1, Math.round(wrap.clientHeight * this.view.dpr));
+    if (this.canvas.width === targetW && this.canvas.height === targetH) return;
+    this.canvas.width = targetW;
+    this.canvas.height = targetH;
     this.requestDraw();
   }
 
@@ -278,7 +288,16 @@ export class Editor {
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => {
       this._raf = null;
-      drawLayout(this.ctx, this.preview ?? this.layout, this.view, {
+      if (!this._backCanvas) {
+        this._backCanvas = document.createElement('canvas');
+        this._backCtx = this._backCanvas.getContext('2d');
+      }
+      if (this._backCanvas.width !== this.canvas.width || this._backCanvas.height !== this.canvas.height) {
+        this._backCanvas.width = this.canvas.width;
+        this._backCanvas.height = this.canvas.height;
+      }
+      if (!this._backCtx) return;
+      drawLayout(this._backCtx, this.preview ?? this.layout, this.view, {
         showGrid: /** @type {HTMLInputElement} */ (this.$('show-grid')).checked,
         showPorts: /** @type {HTMLInputElement} */ (this.$('show-ports')).checked,
         showFlow: /** @type {HTMLInputElement} */ (this.$('show-flow')).checked,
@@ -293,6 +312,8 @@ export class Editor {
         ghost: /** @type {{ entity: Entity, ok: boolean }} */ (this.currentGhost()), // the ghost has no id yet; drawing never reads it
         rect: this.drag?.mode === 'rect' ? this.drag.rect : null,
       });
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      this.ctx.drawImage(this._backCanvas, 0, 0);
     });
   }
 
@@ -419,8 +440,8 @@ export class Editor {
       const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
       const cell = clamp(this.view.cell * Math.exp(-ev.deltaY * 0.0015), MIN_CELL, MAX_CELL);
       const k = cell / this.view.cell;
-      this.view.ox = sx - (sx - this.view.ox) * k;
-      this.view.oy = sy - (sy - this.view.oy) * k;
+      this.view.ox = Math.round(sx - (sx - this.view.ox) * k);
+      this.view.oy = Math.round(sy - (sy - this.view.oy) * k);
       this.view.cell = cell;
       this.requestDraw();
     }, { passive: false });
@@ -502,8 +523,8 @@ export class Editor {
     if (!d) { if (moved) { this.updateCursor(); this.requestDraw(); } return; }
 
     if (d.mode === 'pan') {
-      this.view.ox = d.ox + ev.clientX - d.sx;
-      this.view.oy = d.oy + ev.clientY - d.sy;
+      this.view.ox = Math.round(d.ox + ev.clientX - d.sx);
+      this.view.oy = Math.round(d.oy + ev.clientY - d.sy);
     } else if (!moved) {
       return;
     } else if (d.mode === 'rect') {
@@ -580,6 +601,8 @@ export class Editor {
 
   bindKeyboard() {
     window.addEventListener('keydown', (ev) => {
+      const importDialog = /** @type {HTMLDialogElement} */ (this.$('import-dialog'));
+      if (importDialog?.open) return;
       if (/** @type {HTMLElement} */ (ev.target).matches?.('input, textarea, select')) {
         if (ev.key === 'Escape') /** @type {HTMLElement} */ (ev.target).blur();
         return;
@@ -613,27 +636,16 @@ export class Editor {
     /** @type {Record<string, () => void>} */
     const actions = {
       clear: () => this.clear(),
-      import: () => this.$('import-file').click(),
+      import: () => this.openImportDialog(),
       export: () => this.exportJSON(),
       share: () => this.copyShareLink(),
       undo: () => this.undo(),
       redo: () => this.redo(),
       fit: () => this.fit(),
     };
-    for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-action]'))) {
-      b.addEventListener('click', () => actions[b.dataset.action]());
+    for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.topbar [data-action]'))) {
+      b.addEventListener('click', () => actions[b.dataset.action]?.());
     }
-    this.$('import-file').addEventListener('change', async (ev) => {
-      const file = /** @type {HTMLInputElement} */ (ev.target).files[0];
-      /** @type {HTMLInputElement} */ (ev.target).value = '';
-      if (!file) return;
-      try {
-        this.replaceLayout(Layout.fromJSON(await file.text()));
-        this.status(`Imported ${file.name}`);
-      } catch (err) {
-        this.status(`Import failed: ${/** @type {Error} */ (err).message}`, true);
-      }
-    });
     this.$('layout-name').addEventListener('change', (ev) => {
       this.mutate(() => { this.layout.name = /** @type {HTMLInputElement} */ (ev.target).value.trim() || 'Untitled factory'; });
     });
@@ -677,6 +689,141 @@ export class Editor {
       this.layout.setRepaired(on ? [...repaired, id] : repaired.filter((x) => x !== id));
     });
     this.status(on ? `Repaired ${name}` : `Turned off ${name}${pieces.length ? `; cleared ${pieces.length} pieces (Undo to go back)` : ''}`);
+  }
+
+  // ---- import & export -----------------------------------------------------
+
+  openImportDialog() {
+    const dialog = /** @type {HTMLDialogElement} */ (this.$('import-dialog'));
+    if (!dialog) return;
+    const textarea = /** @type {HTMLTextAreaElement} */ (this.$('import-json-text'));
+    const fileInput = /** @type {HTMLInputElement} */ (this.$('import-dialog-file'));
+    const fileName = this.$('import-dialog-filename');
+    const errorEl = this.$('import-error');
+
+    if (textarea) textarea.value = '';
+    if (fileInput) fileInput.value = '';
+    if (fileName) fileName.textContent = 'No file chosen';
+    if (errorEl) {
+      errorEl.textContent = '';
+      errorEl.hidden = true;
+    }
+    this.importFileName = '';
+
+    dialog.showModal();
+    textarea?.focus();
+  }
+
+  bindImportDialog() {
+    const dialog = /** @type {HTMLDialogElement} */ (this.$('import-dialog'));
+    if (!dialog) return;
+
+    const textarea = /** @type {HTMLTextAreaElement} */ (this.$('import-json-text'));
+    const fileInput = /** @type {HTMLInputElement} */ (this.$('import-dialog-file'));
+    const fileName = this.$('import-dialog-filename');
+    const errorEl = this.$('import-error');
+    const dropCard = dialog.querySelector('.dialog-card');
+
+    /** @param {string} msg */
+    const showError = (msg) => {
+      if (errorEl) {
+        errorEl.textContent = msg;
+        errorEl.hidden = false;
+      }
+    };
+
+    /** @param {File} file */
+    const loadFile = async (file) => {
+      try {
+        const text = await file.text();
+        if (textarea) textarea.value = text;
+        this.importFileName = file.name;
+        if (fileName) fileName.textContent = file.name;
+        if (errorEl) {
+          errorEl.textContent = '';
+          errorEl.hidden = true;
+        }
+      } catch (err) {
+        showError(`Could not read file: ${/** @type {Error} */ (err).message}`);
+      }
+    };
+
+    const submitImport = () => {
+      const text = textarea?.value.trim() ?? '';
+      if (!text) {
+        showError('Please choose a file or paste layout JSON.');
+        return;
+      }
+      try {
+        const layout = Layout.fromJSON(text);
+        this.replaceLayout(layout);
+        const name = this.importFileName || layout.name || 'layout';
+        this.status(`Imported ${name}`);
+        dialog.close();
+      } catch (err) {
+        showError(`Import failed: ${/** @type {Error} */ (err).message}`);
+      }
+    };
+
+    fileInput?.addEventListener('change', async () => {
+      const file = fileInput.files?.[0];
+      if (file) await loadFile(file);
+    });
+
+    textarea?.addEventListener('input', () => {
+      this.importFileName = '';
+      if (fileName) fileName.textContent = 'Pasted text';
+      if (errorEl && !errorEl.hidden) {
+        errorEl.textContent = '';
+        errorEl.hidden = true;
+      }
+    });
+
+    textarea?.addEventListener('keydown', (ev) => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+        ev.preventDefault();
+        submitImport();
+      }
+    });
+
+    // Close when clicking outside dialog-card (on the backdrop)
+    dialog.addEventListener('click', (ev) => {
+      const rect = dialog.getBoundingClientRect();
+      const isOutside =
+        ev.clientX < rect.left ||
+        ev.clientX > rect.right ||
+        ev.clientY < rect.top ||
+        ev.clientY > rect.bottom;
+      if (isOutside) dialog.close();
+    });
+
+    dialog.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') dialog.close();
+    });
+
+    this.$('import-close-btn')?.addEventListener('click', () => dialog.close());
+    this.$('import-cancel-btn')?.addEventListener('click', () => dialog.close());
+    this.$('import-submit-btn')?.addEventListener('click', () => submitImport());
+
+    // Drag and drop support
+    if (dropCard) {
+      dropCard.addEventListener('dragover', (ev) => {
+        ev.preventDefault();
+        dropCard.classList.add('drag-over');
+      });
+      dropCard.addEventListener('dragleave', (ev) => {
+        const related = /** @type {Node | null} */ (/** @type {DragEvent} */ (ev).relatedTarget);
+        if (!related || !dropCard.contains(related)) {
+          dropCard.classList.remove('drag-over');
+        }
+      });
+      dropCard.addEventListener('drop', async (ev) => {
+        ev.preventDefault();
+        dropCard.classList.remove('drag-over');
+        const file = /** @type {DragEvent} */ (ev).dataTransfer?.files?.[0];
+        if (file) await loadFile(file);
+      });
+    }
   }
 
   exportJSON() {
