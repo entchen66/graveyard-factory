@@ -75,10 +75,6 @@ export class Editor {
     this.$ = (id) => root.getElementById(id);
     this.canvas = /** @type {HTMLCanvasElement} */ (this.$('canvas'));
     this.ctx = this.canvas.getContext('2d');
-    /** @type {HTMLCanvasElement | null} */
-    this._backCanvas = null;
-    /** @type {CanvasRenderingContext2D | null} */
-    this._backCtx = null;
     /** @type {View} */
     this.view = { cell: 24, ox: 20, oy: 20, dpr: window.devicePixelRatio || 1 };
     /** @type {string} */
@@ -258,9 +254,10 @@ export class Editor {
     const targetW = Math.max(1, Math.round(wrap.clientWidth * this.view.dpr));
     const targetH = Math.max(1, Math.round(wrap.clientHeight * this.view.dpr));
     if (this.canvas.width === targetW && this.canvas.height === targetH) return;
+    // Resizing clears the canvas: redraw now, not on the next frame, so no blank frame is shown.
     this.canvas.width = targetW;
     this.canvas.height = targetH;
-    this.requestDraw();
+    this.draw();
   }
 
   fit() {
@@ -288,32 +285,25 @@ export class Editor {
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => {
       this._raf = null;
-      if (!this._backCanvas) {
-        this._backCanvas = document.createElement('canvas');
-        this._backCtx = this._backCanvas.getContext('2d');
-      }
-      if (this._backCanvas.width !== this.canvas.width || this._backCanvas.height !== this.canvas.height) {
-        this._backCanvas.width = this.canvas.width;
-        this._backCanvas.height = this.canvas.height;
-      }
-      if (!this._backCtx) return;
-      drawLayout(this._backCtx, this.preview ?? this.layout, this.view, {
-        showGrid: /** @type {HTMLInputElement} */ (this.$('show-grid')).checked,
-        showPorts: /** @type {HTMLInputElement} */ (this.$('show-ports')).checked,
-        showFlow: /** @type {HTMLInputElement} */ (this.$('show-flow')).checked,
-        showIssues: /** @type {HTMLInputElement} */ (this.$('show-issues')).checked,
-        issues: this.preview ? this.previewIssues : this.issues,
-        background: this.background,
-        highlightSection: this.hoverSection,
-        editingTerrain: !!this.terrainTool(),
-        selectedId: this.selectedId,
-        hover: this.hover,
-        // Tool ghosts have no id yet; render only draws them.
-        ghost: /** @type {{ entity: Entity, ok: boolean }} */ (this.currentGhost()), // the ghost has no id yet; drawing never reads it
-        rect: this.drag?.mode === 'rect' ? this.drag.rect : null,
-      });
-      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-      this.ctx.drawImage(this._backCanvas, 0, 0);
+      this.draw();
+    });
+  }
+
+  draw() {
+    drawLayout(this.ctx, this.preview ?? this.layout, this.view, {
+      showGrid: /** @type {HTMLInputElement} */ (this.$('show-grid')).checked,
+      showPorts: /** @type {HTMLInputElement} */ (this.$('show-ports')).checked,
+      showFlow: /** @type {HTMLInputElement} */ (this.$('show-flow')).checked,
+      showIssues: /** @type {HTMLInputElement} */ (this.$('show-issues')).checked,
+      issues: this.preview ? this.previewIssues : this.issues,
+      background: this.background,
+      highlightSection: this.hoverSection,
+      editingTerrain: !!this.terrainTool(),
+      selectedId: this.selectedId,
+      hover: this.hover,
+      // Tool ghosts have no id yet; render only draws them.
+      ghost: /** @type {{ entity: Entity, ok: boolean }} */ (this.currentGhost()), // the ghost has no id yet; drawing never reads it
+      rect: this.drag?.mode === 'rect' ? this.drag.rect : null,
     });
   }
 
@@ -786,20 +776,8 @@ export class Editor {
       }
     });
 
-    // Close when clicking outside dialog-card (on the backdrop)
-    dialog.addEventListener('click', (ev) => {
-      const rect = dialog.getBoundingClientRect();
-      const isOutside =
-        ev.clientX < rect.left ||
-        ev.clientX > rect.right ||
-        ev.clientY < rect.top ||
-        ev.clientY > rect.bottom;
-      if (isOutside) dialog.close();
-    });
-
-    dialog.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape') dialog.close();
-    });
+    // Backdrop click only: the card fills the dialog, so a click on the dialog itself is outside it.
+    dialog.addEventListener('click', (ev) => { if (ev.target === dialog) dialog.close(); });
 
     this.$('import-close-btn')?.addEventListener('click', () => dialog.close());
     this.$('import-cancel-btn')?.addEventListener('click', () => dialog.close());

@@ -230,7 +230,7 @@ dialog::backdrop {
   letter-spacing: normal;
   text-transform: none;
 }
-.dialog-close {
+.dialog-x {
   background: none;
   border: none;
   color: var(--muted);
@@ -240,7 +240,7 @@ dialog::backdrop {
   cursor: pointer;
   border-radius: 4px;
 }
-.dialog-close:hover {
+.dialog-x:hover {
   color: var(--text);
   background: var(--border);
 }
