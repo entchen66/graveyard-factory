@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icons/skull-dotmatrix.svg" alt="Red skull project icon" width="128" height="128"></p>
+
 # Graveyard Keeper 2 factory planner
 
 **Use it in your browser: <https://graveyard-factory.runoverlabs.dev/>** — nothing to install, no account; it saves in your browser and runs entirely on that page.
@@ -19,7 +21,7 @@ It's an unofficial fan tool; see the disclaimer above.
 
 ## Contributing
 
-Pull requests and issues are welcome at <https://github.com/runoverlabs/graveyard-factory>. How it works inside is in [docs/INTERNALS.md](docs/INTERNALS.md); the ground rules for changes are in [AGENTS.md](AGENTS.md) (written for coding agents, but they apply to everyone).
+Pull requests and issues are welcome (the bug icon in the site's top bar opens a new issue from the bug template) at <https://github.com/runoverlabs/graveyard-factory>. How it works inside is in [docs/INTERNALS.md](docs/INTERNALS.md); the ground rules for changes are in [AGENTS.md](AGENTS.md) (written for coding agents, but they apply to everyone).
 
 ### Development setup
 

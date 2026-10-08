@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the change log is built from the full history
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -32,6 +34,7 @@ jobs:
         run: |
           mkdir _site
           cp -r index.html styles.css src assets llms.txt sitemap.xml .nojekyll _site/
+          node tools/build-changelog.js _site/changelog.json
           find _site -type f | sed 's|^_site/||' | sort > /tmp/files.txt
           echo "$(wc -l < /tmp/files.txt) files, $(du -sb _site | cut -f1) bytes"
       - uses: actions/configure-pages@v6

@@ -177,3 +177,47 @@ table.prod td.num { text-align: right; white-space: nowrap; font-variant-numeric
 .failures { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
 .preview-banner { display: none; position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: #1e90ffdd; color: #fff; padding: 4px 12px; border-radius: 12px; font-weight: 600; pointer-events: none; }
 .canvas-wrap.previewing .preview-banner { display: block; }
+
+.changelog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(70vh, 600px);
+  padding: 16px 18px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.changelog[open] { display: flex; flex-direction: column; }
+.changelog::backdrop { background: #000a; }
+.changelog h2 { margin: 0 0 8px; font-size: 16px; }
+.changelog-body { overflow-y: auto; flex: 1; }
+.changelog-body h3 { margin: 12px 0 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.changelog-body ul { margin: 0; padding-left: 18px; }
+.changelog-body li { margin: 2px 0; }
+.dialog-actions { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dialog-links { display: flex; gap: 14px; }
+.dialog-links a, .icon-link { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); text-decoration: none; }
+.dialog-links a:hover, .icon-link:hover { color: var(--text); }
+.icon-link { padding: 2px; }
+
+.welcome {
+  width: min(460px, calc(100vw - 32px));
+  padding: 22px 24px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: center;
+}
+.welcome[open] { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.welcome::backdrop { background: #000a; }
+.welcome h2 { margin: 0; font-size: 18px; }
+.welcome p { margin: 0; color: var(--muted); }
+.welcome img { display: block; }
+.welcome-links { display: flex; gap: 10px; margin: 4px 0; }
+.button-link {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); text-decoration: none;
+}
+.button-link:hover { border-color: var(--muted); }
